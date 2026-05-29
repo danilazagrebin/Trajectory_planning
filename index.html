@@ -1,56 +1,190 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GNSS Tracker + Калман</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>GNSS Tracker — Экстраполяция траектории</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <style>
-        body { margin: 0; padding: 0; }
-        #map { width: 100vw; height: 100vh; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #map {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Панель информации */
         #info {
-            position: fixed; bottom: 10px; left: 10px; z-index: 1000;
-            background: rgba(0,0,0,0.8); color: white; padding: 10px;
-            font-family: monospace; font-size: 14px; border-radius: 5px;
+            position: fixed;
+            bottom: 20px;
+            left: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 12px 15px;
+            border-radius: 12px;
+            font-size: 15px;
+            line-height: 1.5;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            max-width: 400px;
+            transition: all 0.3s;
+        }
+
+        #info.searching {
+            background: rgba(0, 80, 150, 0.9);
+        }
+        #info.error {
+            background: rgba(180, 30, 30, 0.9);
+        }
+        #info.success {
+            background: rgba(0, 100, 50, 0.9);
+        }
+
+        /* Кнопка перезапуска */
+        #restartBtn {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            z-index: 1001;
+            padding: 12px 18px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 15px;
+            font-weight: 600;
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+            cursor: pointer;
+            transition: all 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #restartBtn:active {
+            transform: scale(0.95);
+            background: #1d4ed8;
+        }
+
+        /* Легенда */
+        #legend {
+            position: fixed;
+            top: 15px;
+            left: 15px;
+            z-index: 1001;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+            line-height: 1.8;
+        }
+        .legend-dot {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+        .legend-line {
+            display: inline-block;
+            width: 20px;
+            height: 2px;
+            margin-right: 5px;
+            vertical-align: middle;
+            border-radius: 1px;
         }
     </style>
 </head>
 <body>
+
     <div id="map"></div>
-    <div id="info">Ожидание GPS...</div>
+
+    <div id="legend">
+        <div><span class="legend-dot" style="background:#2563eb;"></span> Текущая позиция (фильтр)</div>
+        <div><span class="legend-dot" style="background:#ef4444;"></span> Прогноз +5 секунд</div>
+        <div><span class="legend-line" style="background:#2563eb;"></span> Пройденный путь</div>
+        <div><span class="legend-line" style="background:#ef4444; border:1px dashed #ef4444;"></span> Линия прогноза</div>
+    </div>
+
+    <button id="restartBtn">🔄 Перезапустить GPS</button>
+
+    <div id="info">🔍 Ищу спутники... 0 сек</div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // ============ 1. КАРТА ============
-        const map = L.map('map').setView([55.75, 37.62], 16); // Москва по умолчанию
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        // ==================== 1. КАРТА (Санкт-Петербург) ====================
+        const SPB_CENTER = [59.9343, 30.3351];  // центр Санкт-Петербурга
+        const DEFAULT_ZOOM = 16;
 
-        // Маркеры
-        const currentMarker = L.circleMarker([0,0], {radius:8, color:'blue', fillOpacity:0.9}).addTo(map);
-        const predictedMarker = L.circleMarker([0,0], {radius:8, color:'red', fillOpacity:0.5}).addTo(map);
-        const predictionLine = L.polyline([], {color:'red', dashArray:'5,10'}).addTo(map);
-        const historyLine = L.polyline([], {color:'blue', weight:2}).addTo(map);
+        const map = L.map('map').setView(SPB_CENTER, DEFAULT_ZOOM);
 
-        const historyPath = []; // хранение истории
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 20
+        }).addTo(map);
 
-        // ============ 2. ФИЛЬТР КАЛМАНА (упрощённый) ============
+        // Маркеры и линии
+        const currentMarker = L.circleMarker([0,0], {
+            radius: 9,
+            color: '#1d4ed8',
+            fillColor: '#2563eb',
+            fillOpacity: 0.9,
+            weight: 3
+        }).addTo(map);
+
+        const predictedMarker = L.circleMarker([0,0], {
+            radius: 9,
+            color: '#dc2626',
+            fillColor: '#ef4444',
+            fillOpacity: 0.4,
+            weight: 3
+        }).addTo(map);
+
+        const predictionLine = L.polyline([], {
+            color: '#ef4444',
+            weight: 3,
+            dashArray: '8, 8'
+        }).addTo(map);
+
+        const historyLine = L.polyline([], {
+            color: '#2563eb',
+            weight: 3,
+            opacity: 0.7
+        }).addTo(map);
+
+        const historyPath = [];
+
+        // ==================== 2. ФИЛЬТР КАЛМАНА ====================
         class KalmanFilter {
             constructor() {
-                // Состояние: [широта, долгота, скорость_север, скорость_восток] в градусах
-                this.x = [0, 0, 0, 0];       // lat, lon, v_lat, v_lon
-                this.P = [1,1,1,1];          // неопределённость (диагональ ковариации)
-                this.Q = 0.0000001;           // шум процесса
-                this.R = 0.00001;             // шум измерений GPS (~1 метр)
+                // Вектор состояния: [lat, lon, v_lat, v_lon] (градусы и град/с)
+                this.x = [0, 0, 0, 0];
+                this.P = [1.0, 1.0, 0.5, 0.5];     // диагональ ковариационной матрицы
+                this.Q = 0.0000001;                  // шум процесса
+                this.R = 0.00001;                    // шум измерений (~1 метр)
                 this.initialized = false;
             }
 
             predict(dt) {
-                if (!this.initialized) return;
-                // x[0] += v_lat * dt
-                this.x[0] += this.x[2] * dt;
-                this.x[1] += this.x[3] * dt;
-                // Увеличиваем неопределённость
-                for (let i = 0; i < 4; i++) this.P[i] += this.Q;
+                if (!this.initialized || dt <= 0) return;
+                // Модель постоянной скорости
+                this.x[0] += this.x[2] * dt;  // lat
+                this.x[1] += this.x[3] * dt;  // lon
+                // Рост неопределённости со временем
+                for (let i = 0; i < 4; i++) {
+                    this.P[i] += this.Q * dt;
+                }
             }
 
             update(measuredLat, measuredLon, dt) {
@@ -61,49 +195,103 @@
                     return [measuredLat, measuredLon];
                 }
 
-                // Измеряем скорость по смещению
-                const vLat = (measuredLat - this.x[0]) / dt;
-                const vLon = (measuredLon - this.x[1]) / dt;
+                // Оценка скорости по смещению
+                let vLat = 0, vLon = 0;
+                if (dt > 0) {
+                    vLat = (measuredLat - this.x[0]) / dt;
+                    vLon = (measuredLon - this.x[1]) / dt;
+                }
 
-                // Обновление Калмана (упрощённое: независимые каналы)
+                // Обновление координат (фильтр Калмана, независимые каналы)
                 for (let i = 0; i < 2; i++) {
-                    const K = this.P[i] / (this.P[i] + this.R); // Коэффициент Калмана
-                    this.x[i] += K * ((i===0 ? measuredLat : measuredLon) - this.x[i]);
+                    const residual = (i === 0 ? measuredLat : measuredLon) - this.x[i];
+                    const K = this.P[i] / (this.P[i] + this.R);   // коэффициент усиления
+                    this.x[i] += K * residual;
                     this.P[i] *= (1 - K);
                 }
-                // Скорости сглаживаем простым смешиванием
-                this.x[2] = 0.7 * this.x[2] + 0.3 * vLat;
-                this.x[3] = 0.7 * this.x[3] + 0.3 * vLon;
+
+                // Сглаживание скорости (экспоненциальное скользящее среднее)
+                const alpha = 0.3;  // весовой коэффициент для новых данных
+                this.x[2] = (1 - alpha) * this.x[2] + alpha * vLat;
+                this.x[3] = (1 - alpha) * this.x[3] + alpha * vLon;
 
                 return [this.x[0], this.x[1]];
             }
 
-            // Экстраполяция на seconds_ahead секунд
             extrapolate(secondsAhead) {
+                if (!this.initialized) return [this.x[0], this.x[1]];
                 return [
                     this.x[0] + this.x[2] * secondsAhead,
                     this.x[1] + this.x[3] * secondsAhead
                 ];
             }
 
-            getVelocity() { return [this.x[2], this.x[3]]; }
+            getSpeed() {
+                // Перевод градусов/сек → метры/сек (приблизительно)
+                const latMetersPerDeg = 111111;
+                const lonMetersPerDeg = 111111 * Math.cos(this.x[0] * Math.PI / 180);
+                const vLatMps = this.x[2] * latMetersPerDeg;
+                const vLonMps = this.x[3] * lonMetersPerDeg;
+                return Math.sqrt(vLatMps * vLatMps + vLonMps * vLonMps);
+            }
         }
 
+        // ==================== 3. ИНДИКАТОР ПОИСКА ====================
+        const infoDiv = document.getElementById('info');
+        let searchStartTime = Date.now();
+        let searchTimer = null;
+
+        function startSearchIndicator() {
+            searchStartTime = Date.now();
+            infoDiv.className = 'searching';
+            updateSearchDisplay(0);
+            searchTimer = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - searchStartTime) / 1000);
+                updateSearchDisplay(elapsed);
+            }, 1000);
+        }
+
+        function updateSearchDisplay(elapsed) {
+            const dots = '.'.repeat((elapsed % 3) + 1);
+            infoDiv.innerHTML = `
+                🔍 Ищу спутники${dots} ${elapsed} сек<br>
+                <small style="opacity:0.8;">📍 Выйдите на открытое место</small><br>
+                <small style="opacity:0.8;">📱 Не выключайте экран</small>
+            `;
+        }
+
+        function stopSearchIndicator() {
+            if (searchTimer) {
+                clearInterval(searchTimer);
+                searchTimer = null;
+            }
+        }
+
+        // ==================== 4. ОБРАБОТЧИКИ GPS ====================
         const kf = new KalmanFilter();
         let lastTimestamp = null;
+        let firstFix = false;
 
-        // ============ 3. ПОЛУЧЕНИЕ GPS С ТЕЛЕФОНА ============
         function onGPSSuccess(position) {
-            const { latitude, longitude, speed, heading } = position.coords;
-            const now = position.timestamp / 1000; // в секунды
+            const { latitude, longitude, speed, heading, accuracy } = position.coords;
+            const now = position.timestamp / 1000;
 
-            // Если первый запуск — инициализируем время
-            if (lastTimestamp === null) {
-                lastTimestamp = now;
+            // Первый успешный фикс
+            if (!firstFix) {
+                firstFix = true;
+                stopSearchIndicator();
+                infoDiv.className = 'success';
+                map.setView([latitude, longitude], 18);
                 kf.x[0] = latitude;
                 kf.x[1] = longitude;
                 kf.initialized = true;
-                map.setView([latitude, longitude], 18);
+                lastTimestamp = now;
+                currentMarker.setLatLng([latitude, longitude]);
+                document.getElementById('info').innerHTML = `
+                    ✅ Позиция определена!<br>
+                    <small>Точность: ±${accuracy ? accuracy.toFixed(1) : '?'} м</small><br>
+                    <small>Жду следующие измерения...</small>
+                `;
                 return;
             }
 
@@ -111,10 +299,12 @@
             if (dt <= 0) return;
             lastTimestamp = now;
 
-            // Прямое измерение скорости от GPS (переводим в град/с)
-            if (speed !== null && heading !== null) {
-                const speedDegLat = speed * Math.cos(heading * Math.PI/180) / 111111;
-                const speedDegLon = speed * Math.sin(heading * Math.PI/180) / (111111 * Math.cos(latitude * Math.PI/180));
+            // Если GPS передаёт скорость и курс — используем их для "подсказки" фильтру
+            if (speed !== null && heading !== null && speed > 0) {
+                const headingRad = heading * Math.PI / 180;
+                const speedDegLat = speed * Math.cos(headingRad) / 111111;
+                const speedDegLon = speed * Math.sin(headingRad) / (111111 * Math.cos(latitude * Math.PI / 180));
+                // Аккуратное обновление скорости
                 kf.x[2] = 0.7 * kf.x[2] + 0.3 * speedDegLat;
                 kf.x[3] = 0.7 * kf.x[3] + 0.3 * speedDegLon;
             }
@@ -124,15 +314,21 @@
             const [filtLat, filtLon] = kf.update(latitude, longitude, dt);
 
             // Экстраполяция
-            const [predLat, predLon] = kf.extrapolate(5); // +5 секунд
+            const PREDICTION_SECONDS = 5;
+            const [predLat, predLon] = kf.extrapolate(PREDICTION_SECONDS);
 
-            // ============ 4. ОТРИСОВКА ============
+            // Расчёт смещения в метрах
+            const dLat = (predLat - filtLat) * 111111;
+            const dLon = (predLon - filtLon) * 111111 * Math.cos(filtLat * Math.PI / 180);
+            const offsetMeters = Math.sqrt(dLat * dLat + dLon * dLon).toFixed(1);
+
+            // ==================== ОТРИСОВКА ====================
             currentMarker.setLatLng([filtLat, filtLon]);
             predictedMarker.setLatLng([predLat, predLon]);
 
-            // История
+            // История трека
             historyPath.push([filtLat, filtLon]);
-            if (historyPath.length > 100) historyPath.shift();
+            if (historyPath.length > 200) historyPath.shift();
             historyLine.setLatLngs(historyPath);
 
             // Линия прогноза
@@ -141,24 +337,80 @@
                 [predLat, predLon]
             ]);
 
-            // Статистика
-            document.getElementById('info').innerHTML = `
-                GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}<br>
-                Скорость: ${speed ? (speed*3.6).toFixed(1) : '?'} км/ч<br>
-                Прогноз +5с: ${(predLat-filtLat)*111111:.1f}м, ${(predLon-filtLon)*111111*Math.cos(latitude*Math.PI/180):.1f}м
+            // Информационная панель
+            const speedKph = speed ? (speed * 3.6).toFixed(1) : (kf.getSpeed() * 3.6).toFixed(1);
+            infoDiv.className = 'success';
+            infoDiv.innerHTML = `
+                📍 ${filtLat.toFixed(6)}, ${filtLon.toFixed(6)}<br>
+                🚀 Скорость: ${speedKph} км/ч<br>
+                🎯 Точность GPS: ±${accuracy ? accuracy.toFixed(1) : '?'} м<br>
+                🔮 Прогноз (+${PREDICTION_SECONDS}с): ${offsetMeters} м
             `;
         }
 
         function onGPSError(err) {
-            document.getElementById('info').innerHTML = 'Ошибка GPS: ' + err.message;
+            stopSearchIndicator();
+            infoDiv.className = 'error';
+
+            let message = '';
+            switch(err.code) {
+                case err.PERMISSION_DENIED:
+                    message = '❌ Доступ к геолокации запрещён<br><small>Разрешите в настройках браузера</small>';
+                    break;
+                case err.POSITION_UNAVAILABLE:
+                    message = '📡 Нет сигнала GPS<br><small>Выйдите на открытое место</small>';
+                    break;
+                case err.TIMEOUT:
+                    message = '⏱ Превышено время ожидания<br><small>Нажмите "Перезапустить GPS"</small>';
+                    break;
+                default:
+                    message = `⚠ Ошибка: ${err.message}`;
+            }
+            infoDiv.innerHTML = message;
         }
 
-        // Запуск слежения
-        navigator.geolocation.watchPosition(onGPSSuccess, onGPSError, {
-            enableHighAccuracy: true,
-            timeout: 5000,
-            maximumAge: 0
+        // ==================== 5. ЗАПУСК И ПЕРЕЗАПУСК ====================
+        let watchId = null;
+
+        function startGPS() {
+            // Сброс состояния
+            stopSearchIndicator();
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+            firstFix = false;
+            lastTimestamp = null;
+            kf.initialized = false;
+            historyPath.length = 0;
+            historyLine.setLatLngs([]);
+            predictionLine.setLatLngs([]);
+            predictedMarker.setLatLng([0, 0]);
+
+            // Запуск индикатора и слежения
+            startSearchIndicator();
+
+            watchId = navigator.geolocation.watchPosition(
+                onGPSSuccess,
+                onGPSError,
+                {
+                    enableHighAccuracy: true,
+                    timeout: 30000,      // 30 секунд на поиск первой точки
+                    maximumAge: 0         // всегда свежие данные
+                }
+            );
+        }
+
+        // Кнопка перезапуска
+        document.getElementById('restartBtn').addEventListener('click', () => {
+            infoDiv.innerHTML = '🔄 Перезапуск GPS...';
+            startGPS();
         });
+
+        // Первый запуск
+        startGPS();
+
+        console.log('🚀 GNSS Tracker запущен (Санкт-Петербург)');
+        console.log('📡 Ожидание данных GPS...');
     </script>
 </body>
 </html>
