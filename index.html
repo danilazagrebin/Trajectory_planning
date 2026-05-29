@@ -2,515 +2,169 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ГНСС Трекер — GPS+ГЛОНАСС+Galileo+BeiDou</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ГНСС Трекер + Экстраполяция</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            overflow: hidden;
-            touch-action: manipulation;
-            -webkit-user-select: none;
-            user-select: none;
-            background: #000;
-        }
-
-        #map {
-            width: 100vw;
-            height: 100vh;
-            z-index: 1;
-        }
-
-        /* Основная панель */
-        #dashboard {
-            position: fixed;
-            bottom: 20px;
-            left: 10px;
-            right: 10px;
-            z-index: 1000;
-            background: rgba(10, 15, 25, 0.92);
-            color: #e0e0e0;
-            padding: 14px 16px;
-            border-radius: 14px;
-            font-size: 14px;
-            line-height: 1.6;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            box-shadow: 0 8px 30px rgba(0,0,0,0.5);
-            border: 1px solid rgba(255,255,255,0.1);
-            max-width: 420px;
-        }
-
-        #dashboard.searching { border-color: rgba(59, 130, 246, 0.6); }
-        #dashboard.success  { border-color: rgba(34, 197, 94, 0.6); }
-        #dashboard.error    { border-color: rgba(239, 68, 68, 0.6); }
-
-        /* Строки панели */
-        .dash-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 3px 0;
-        }
-        .dash-label { color: #9ca3af; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .dash-value { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
-        .dash-value.green { color: #4ade80; }
-        .dash-value.blue  { color: #60a5fa; }
-        .dash-value.red   { color: #f87171; }
-        .dash-value.amber { color: #fbbf24; }
-
-        /* Индикатор созвездий */
-        #constellation-bar {
-            display: flex;
-            gap: 6px;
-            margin-top: 8px;
-            flex-wrap: wrap;
-        }
-        .const-badge {
-            padding: 3px 10px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.3px;
-            opacity: 0.4;
-            transition: all 0.4s;
-        }
-        .const-badge.active {
-            opacity: 1;
-            box-shadow: 0 0 10px currentColor;
-        }
-        .const-gps     { background: rgba(59, 130, 246, 0.25); color: #60a5fa; }
-        .const-glonass { background: rgba(239, 68, 68, 0.25);  color: #f87171; }
-        .const-galileo { background: rgba(34, 197, 94, 0.25);  color: #4ade80; }
-        .const-beidou  { background: rgba(251, 191, 36, 0.25); color: #fbbf24; }
-
-        /* Кнопка перезапуска */
-        #restartBtn {
-            position: fixed;
-            top: 15px;
-            right: 15px;
-            z-index: 1001;
-            padding: 12px 18px;
-            background: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 25px;
-            font-size: 14px;
-            font-weight: 600;
-            box-shadow: 0 4px 18px rgba(37, 99, 235, 0.5);
-            cursor: pointer;
-            transition: all 0.2s;
-            -webkit-tap-highlight-color: transparent;
-        }
-        #restartBtn:active {
-            transform: scale(0.94);
-            background: #1d4ed8;
-        }
-
-        /* Легенда */
-        #legend {
-            position: fixed;
-            top: 15px;
-            left: 15px;
-            z-index: 1001;
-            background: rgba(10, 15, 25, 0.85);
-            color: #ccc;
-            padding: 10px 14px;
-            border-radius: 10px;
-            font-size: 12px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-            line-height: 2;
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(255,255,255,0.08);
-        }
-        .legend-dot {
-            display: inline-block;
-            width: 11px; height: 11px;
-            border-radius: 50%;
-            margin-right: 6px;
-            vertical-align: middle;
-        }
-        .legend-line {
-            display: inline-block;
-            width: 22px; height: 2px;
-            margin-right: 6px;
-            vertical-align: middle;
-            border-radius: 1px;
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        #panel {
+            position: fixed; bottom: 20px; left: 10px; right: 10px;
+            background: rgba(0,0,0,0.85); color: white;
+            padding: 12px; border-radius: 10px;
+            font-size: 14px; z-index: 1000; max-width: 350px;
         }
     </style>
 </head>
 <body>
 
     <div id="map"></div>
-
-    <div id="legend">
-        <div><span class="legend-dot" style="background:#3b82f6;"></span> Тек. позиция (фильтр Калмана)</div>
-        <div><span class="legend-dot" style="background:#ef4444;"></span> Прогноз +5 сек</div>
-        <div><span class="legend-line" style="background:#3b82f6;"></span> Пройденный трек</div>
-        <div><span class="legend-line" style="background:#ef4444; border:1px dashed #ef4444;"></span> Вектор прогноза</div>
-    </div>
-
-    <button id="restartBtn">🔄 Перезапуск ГНСС</button>
-
-    <div id="dashboard" class="searching">
-        <div class="dash-row">
-            <span class="dash-label">Статус</span>
-            <span class="dash-value amber" id="statusText">Инициализация...</span>
-        </div>
-        <div class="dash-row">
-            <span class="dash-label">Координаты</span>
-            <span class="dash-value" id="coordsText">—</span>
-        </div>
-        <div class="dash-row">
-            <span class="dash-label">Скорость</span>
-            <span class="dash-value" id="speedText">—</span>
-        </div>
-        <div class="dash-row">
-            <span class="dash-label">Точность</span>
-            <span class="dash-value" id="accuracyText">—</span>
-        </div>
-        <div class="dash-row">
-            <span class="dash-label">Спутники</span>
-            <span class="dash-value blue" id="satellitesText">Поиск...</span>
-        </div>
-        <div class="dash-row">
-            <span class="dash-label">Прогноз (+5с)</span>
-            <span class="dash-value red" id="predictText">—</span>
-        </div>
-        <div id="constellation-bar">
-            <span class="const-badge const-gps"     id="badgeGPS">🇺🇸 GPS</span>
-            <span class="const-badge const-glonass" id="badgeGLONASS">🇷🇺 ГЛОНАСС</span>
-            <span class="const-badge const-galileo" id="badgeGalileo">🇪🇺 Galileo</span>
-            <span class="const-badge const-beidou"  id="badgeBeiDou">🇨🇳 BeiDou</span>
-        </div>
-    </div>
+    <div id="panel">🔍 Поиск спутников...</div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // ==================== 1. КАРТА (Санкт-Петербург) ====================
-        const SPB_CENTER = [59.9343, 30.3351];
-        const map = L.map('map', {
-            center: SPB_CENTER,
-            zoom: 16,
-            zoomControl: false,
-            attributionControl: false
-        });
-        L.control.zoom({ position: 'bottomright' }).addTo(map);
-        L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 20
-        }).addTo(map);
+        // ========== 1. КАРТА ==========
+        const map = L.map('map').setView([59.9343, 30.3351], 16); // СПб
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        // Графические элементы
-        const currentMarker = L.circleMarker([0,0], {
-            radius: 9, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 0.95, weight: 3
-        }).addTo(map);
-        const predictedMarker = L.circleMarker([0,0], {
-            radius: 9, color: '#dc2626', fillColor: '#ef4444', fillOpacity: 0.35, weight: 3
-        }).addTo(map);
-        const predictionLine = L.polyline([], {
-            color: '#ef4444', weight: 3, dashArray: '8, 8', opacity: 0.8
-        }).addTo(map);
-        const historyLine = L.polyline([], {
-            color: '#3b82f6', weight: 3, opacity: 0.7
-        }).addTo(map);
+        // Маркеры
+        const markerGPS    = L.circleMarker([0,0], {radius:7, color:'blue', fillOpacity:1}).addTo(map);
+        const markerPred   = L.circleMarker([0,0], {radius:7, color:'red',  fillOpacity:0.4}).addTo(map);
+        const lineHistory  = L.polyline([], {color:'blue'}).addTo(map);
+        const linePredict  = L.polyline([], {color:'red', dashArray:'5,5'}).addTo(map);
+        const history = [];
 
-        const historyPath = [];
 
-        // ==================== 2. ФИЛЬТР КАЛМАНА (модель CV) ====================
-        class KalmanFilter {
+        // ========== 2. ФИЛЬТР КАЛМАНА (простая модель постоянной скорости) ==========
+        class Kalman {
             constructor() {
-                this.x = [0, 0, 0, 0];         // lat, lon, v_lat, v_lon
-                this.P = [1, 1, 0.5, 0.5];
-                this.Q = 0.0000001;
-                this.R = 0.000005;             // ~0.5 м в градусах (чувствительнее)
-                this.initialized = false;
+                this.lat = 0;      // широта (градусы)
+                this.lon = 0;      // долгота
+                this.vLat = 0;     // скорость по широте (град/сек)
+                this.vLon = 0;     // скорость по долготе
+                this.P = 1;        // неопределённость
+                this.ok = false;   // инициализирован?
             }
 
+            // Предсказание на dt секунд вперёд
             predict(dt) {
-                if (!this.initialized || dt <= 0) return;
-                this.x[0] += this.x[2] * dt;
-                this.x[1] += this.x[3] * dt;
-                for (let i = 0; i < 4; i++) this.P[i] += this.Q * dt;
+                if (!this.ok) return;
+                this.lat += this.vLat * dt;
+                this.lon += this.vLon * dt;
+                this.P += 0.0000001 * dt;   // растёт неопределённость
             }
 
-            update(lat, lon, dt) {
-                if (!this.initialized) {
-                    this.x[0] = lat;
-                    this.x[1] = lon;
-                    this.initialized = true;
-                    return [lat, lon];
+            // Уточнение по измерению GPS
+            update(gpsLat, gpsLon, dt) {
+                if (!this.ok) {
+                    this.lat = gpsLat;
+                    this.lon = gpsLon;
+                    this.ok = true;
+                    return;
                 }
-                let vLat = 0, vLon = 0;
-                if (dt > 0) {
-                    vLat = (lat - this.x[0]) / dt;
-                    vLon = (lon - this.x[1]) / dt;
-                }
-                for (let i = 0; i < 2; i++) {
-                    const z = i === 0 ? lat : lon;
-                    const K = this.P[i] / (this.P[i] + this.R);
-                    this.x[i] += K * (z - this.x[i]);
-                    this.P[i] *= (1 - K);
-                }
-                const alpha = 0.25;
-                this.x[2] = (1 - alpha) * this.x[2] + alpha * vLat;
-                this.x[3] = (1 - alpha) * this.x[3] + alpha * vLon;
-                return [this.x[0], this.x[1]];
+                // Оцениваем скорость по смещению
+                const newVLat = (gpsLat - this.lat) / dt;
+                const newVLon = (gpsLon - this.lon) / dt;
+
+                // Коэффициент Калмана: сколько доверяем измерению?
+                const R = 0.00001;   // шум GPS (~1 метр в градусах)
+                const K = this.P / (this.P + R);
+
+                // Корректируем координаты
+                this.lat += K * (gpsLat - this.lat);
+                this.lon += K * (gpsLon - this.lon);
+                this.P *= (1 - K);
+
+                // Сглаживаем скорость (70% старая + 30% новая)
+                this.vLat = 0.7 * this.vLat + 0.3 * newVLat;
+                this.vLon = 0.7 * this.vLon + 0.3 * newVLon;
             }
 
-            extrapolate(sec) {
-                if (!this.initialized) return [this.x[0], this.x[1]];
-                return [this.x[0] + this.x[2] * sec, this.x[1] + this.x[3] * sec];
-            }
-
-            getSpeedMps() {
-                const latM = this.x[2] * 111111;
-                const lonM = this.x[3] * 111111 * Math.cos(this.x[0] * Math.PI / 180);
-                return Math.sqrt(latM * latM + lonM * lonM);
-            }
-        }
-
-        // ==================== 3. ОЦЕНКА СОЗВЕЗДИЙ ====================
-        // Браузер не даёт прямое созвездие. Используем эвристики:
-        // - Количество спутников (если доступно)
-        // - Частота обновления (Galileo/GPS дают до 10 Гц на флагманах)
-        // - Точность (<3 м — multi-GNSS, <1 м — dual-frequency)
-
-        function estimateConstellations(accuracy, updateRate, satelliteCount) {
-            const active = { gps: false, glonass: false, galileo: false, beidou: false };
-            
-            // Если есть точное количество спутников
-            if (satelliteCount > 0) {
-                if (satelliteCount >= 8) {
-                    // Скорее всего multi-GNSS
-                    active.gps = true;
-                    if (satelliteCount >= 14) active.glonass = true;
-                    if (satelliteCount >= 18) active.galileo = true;
-                    if (satelliteCount >= 22) active.beidou = true;
-                } else if (satelliteCount >= 4) {
-                    active.gps = true;
-                }
-            } else {
-                // Эвристика по точности (меньше — больше систем)
-                if (accuracy <= 3.0) {
-                    active.gps = true;
-                    active.glonass = true;
-                }
-                if (accuracy <= 1.5) active.galileo = true;
-                if (accuracy <= 1.0) active.beidou = true;
-                if (accuracy > 3.0 && accuracy <= 10.0) active.gps = true;
-            }
-
-            // Galileo часто даёт высокую частоту обновления
-            if (updateRate >= 2) active.galileo = true;
-
-            return active;
-        }
-
-        function updateConstellationBadges(active) {
-            const badges = {
-                gps:     document.getElementById('badgeGPS'),
-                glonass: document.getElementById('badgeGLONASS'),
-                galileo: document.getElementById('badgeGalileo'),
-                beidou:  document.getElementById('badgeBeiDou')
-            };
-            for (const [sys, badge] of Object.entries(badges)) {
-                if (active[sys]) {
-                    badge.classList.add('active');
-                } else {
-                    badge.classList.remove('active');
-                }
+            // Экстраполяция на seconds секунд вперёд
+            extrapolate(seconds) {
+                return [
+                    this.lat + this.vLat * seconds,
+                    this.lon + this.vLon * seconds
+                ];
             }
         }
 
-        // ==================== 4. DOM-элементы панели ====================
-        const dashboard    = document.getElementById('dashboard');
-        const statusText   = document.getElementById('statusText');
-        const coordsText   = document.getElementById('coordsText');
-        const speedText    = document.getElementById('speedText');
-        const accuracyText = document.getElementById('accuracyText');
-        const satellitesText = document.getElementById('satellitesText');
-        const predictText  = document.getElementById('predictText');
+        const kf = new Kalman();
+        let lastTime = null;
 
-        // ==================== 5. ОБРАБОТЧИКИ ГНСС ====================
-        const kf = new KalmanFilter();
-        let lastTimestamp = null;
-        let firstFix = false;
-        let updateTimestamps = [];  // для оценки частоты обновления
 
-        function onGNSSSuccess(position) {
-            const { latitude, longitude, speed, heading, accuracy, altitude, altitudeAccuracy } = position.coords;
-            const now = position.timestamp / 1000;
+        // ========== 3. ПОЛУЧЕНИЕ ДАННЫХ ГНСС ==========
+        function onPosition(pos) {
+            const { latitude, longitude, speed, heading, accuracy } = pos.coords;
+            const now = pos.timestamp / 1000;
 
-            // Оценка частоты обновления
-            updateTimestamps.push(now);
-            if (updateTimestamps.length > 10) updateTimestamps.shift();
-            let updateRate = 0;
-            if (updateTimestamps.length >= 2) {
-                const intervals = [];
-                for (let i = 1; i < updateTimestamps.length; i++) {
-                    intervals.push(updateTimestamps[i] - updateTimestamps[i-1]);
-                }
-                const avgInterval = intervals.reduce((a,b) => a+b, 0) / intervals.length;
-                updateRate = avgInterval > 0 ? 1.0 / avgInterval : 0;
-            }
-
-            // Первый фикс
-            if (!firstFix) {
-                firstFix = true;
-                dashboard.className = 'success';
-                statusText.textContent = '✅ Захват ГНСС';
-                statusText.className = 'dash-value green';
+            // Первый запуск — инициализация
+            if (lastTime === null) {
+                lastTime = now;
+                kf.lat = latitude;
+                kf.lon = longitude;
+                kf.ok = true;
                 map.setView([latitude, longitude], 18);
-                kf.x[0] = latitude;
-                kf.x[1] = longitude;
-                kf.initialized = true;
-                lastTimestamp = now;
-                currentMarker.setLatLng([latitude, longitude]);
+                markerGPS.setLatLng([latitude, longitude]);
+                document.getElementById('panel').innerHTML = '✅ Позиция определена';
+                return;
             }
 
-            const dt = now - lastTimestamp;
+            const dt = now - lastTime;
             if (dt <= 0) return;
-            lastTimestamp = now;
+            lastTime = now;
 
-            // Используем скорость от чипа, если есть
-            if (speed !== null && heading !== null && speed > 0.1) {
-                const hRad = heading * Math.PI / 180;
-                const cosLat = Math.cos(latitude * Math.PI / 180);
-                const spdLat = speed * Math.cos(hRad) / 111111;
-                const spdLon = speed * Math.sin(hRad) / (111111 * cosLat);
-                kf.x[2] = 0.6 * kf.x[2] + 0.4 * spdLat;
-                kf.x[3] = 0.6 * kf.x[3] + 0.4 * spdLon;
+            // Если чип даёт скорость — используем для подсказки фильтру
+            if (speed && heading) {
+                const rad = heading * Math.PI / 180;
+                kf.vLat = 0.7 * kf.vLat + 0.3 * speed * Math.cos(rad) / 111111;
+                kf.vLon = 0.7 * kf.vLon + 0.3 * speed * Math.sin(rad) / (111111 * Math.cos(latitude * Math.PI / 180));
             }
 
-            // Фильтр Калмана
+            // Шаг 1: предсказание
             kf.predict(dt);
-            const [fLat, fLon] = kf.update(latitude, longitude, dt);
 
-            // Экстраполяция
-            const PRED_SEC = 5;
-            const [pLat, pLon] = kf.extrapolate(PRED_SEC);
+            // Шаг 2: коррекция по измерению
+            kf.update(latitude, longitude, dt);
 
-            // Смещение в метрах
-            const dLatM = (pLat - fLat) * 111111;
-            const dLonM = (pLon - fLon) * 111111 * Math.cos(fLat * Math.PI / 180);
-            const offsetM = Math.sqrt(dLatM*dLatM + dLonM*dLonM);
+            // Шаг 3: экстраполяция на 5 секунд
+            const [predLat, predLon] = kf.extrapolate(5);
 
-            // Оценка созвездий
-            const satellites = position.coords.satellites || 
-                               (accuracy < 3 ? 14 : accuracy < 5 ? 8 : 4);  // примерная оценка если нет точных данных
-            const constellations = estimateConstellations(accuracy, updateRate, 
-                position.coords.satellites || 0);
+            // Расчёт смещения прогноза в метрах
+            const dLatM = (predLat - kf.lat) * 111111;
+            const dLonM = (predLon - kf.lon) * 111111 * Math.cos(kf.lat * Math.PI / 180);
+            const dist = Math.sqrt(dLatM*dLatM + dLonM*dLonM);
 
-            // ==================== ОТРИСОВКА ====================
-            currentMarker.setLatLng([fLat, fLon]);
-            predictedMarker.setLatLng([pLat, pLon]);
-            historyPath.push([fLat, fLon]);
-            if (historyPath.length > 200) historyPath.shift();
-            historyLine.setLatLngs(historyPath);
-            predictionLine.setLatLngs([[fLat, fLon], [pLat, pLon]]);
+            // ========== 4. ОТРИСОВКА ==========
+            markerGPS.setLatLng([kf.lat, kf.lon]);
+            markerPred.setLatLng([predLat, predLon]);
 
-            // Обновление панели
-            const spdKph = speed ? (speed * 3.6) : (kf.getSpeedMps() * 3.6);
-            const altStr = altitude ? ` ±${altitude.toFixed(0)} м` : '';
+            history.push([kf.lat, kf.lon]);
+            if (history.length > 200) history.shift();
+            lineHistory.setLatLngs(history);
+            linePredict.setLatLngs([[kf.lat, kf.lon], [predLat, predLon]]);
 
-            dashboard.className = 'success';
-            statusText.textContent = '✅ Multi-GNSS Fix';
-            statusText.className = 'dash-value green';
-            coordsText.textContent = `${fLat.toFixed(7)}, ${fLon.toFixed(7)}${altStr}`;
-            coordsText.className = 'dash-value';
-            speedText.textContent = `${spdKph.toFixed(1)} км/ч (${updateRate.toFixed(1)} Гц)`;
-            speedText.className = 'dash-value blue';
-            accuracyText.textContent = accuracy ? `±${accuracy.toFixed(1)} м` : '?';
-            accuracyText.className = accuracy < 3 ? 'dash-value green' : 
-                                     accuracy < 8 ? 'dash-value amber' : 'dash-value red';
-            
-            const satInfo = position.coords.satellites 
-                ? `${position.coords.satellites} спутников` 
-                : `~${satellites} (оценка)`;
-            satellitesText.textContent = satInfo;
-            satellitesText.className = 'dash-value blue';
-            predictText.textContent = `${offsetM.toFixed(1)} м`;
-            predictText.className = 'dash-value red';
-
-            updateConstellationBadges(constellations);
+            // Панель информации
+            document.getElementById('panel').innerHTML = `
+                📍 ${kf.lat.toFixed(6)}, ${kf.lon.toFixed(6)}<br>
+                🚀 ${speed ? (speed*3.6).toFixed(1) : '?'} км/ч | Точность ±${accuracy?.toFixed(1) || '?'} м<br>
+                🔮 Прогноз +5с: ${dist.toFixed(1)} м
+            `;
         }
 
-        function onGNSSError(err) {
-            dashboard.className = 'error';
-            statusText.className = 'dash-value red';
-            let msg = '';
-            switch(err.code) {
-                case err.PERMISSION_DENIED:
-                    msg = '❌ Доступ запрещён'; break;
-                case err.POSITION_UNAVAILABLE:
-                    msg = '📡 Нет сигнала ГНСС'; break;
-                case err.TIMEOUT:
-                    msg = '⏱ Таймаут поиска'; break;
-                default:
-                    msg = `⚠ ${err.message}`;
-            }
-            statusText.textContent = msg;
-            coordsText.textContent = '—';
-            updateConstellationBadges({ gps: false, glonass: false, galileo: false, beidou: false });
+        function onError(err) {
+            document.getElementById('panel').innerHTML = 
+                '❌ Нет сигнала ГНСС. Выйдите на улицу и обновите страницу.';
         }
 
-        // ==================== 6. ЗАПУСК И УПРАВЛЕНИЕ ====================
-        let watchId = null;
+        // Запуск слежения
+        navigator.geolocation.watchPosition(onPosition, onError, {
+            enableHighAccuracy: true,
+            timeout: 30000,
+            maximumAge: 0
+        });
 
-        function startGNSS() {
-            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-            firstFix = false;
-            lastTimestamp = null;
-            kf.initialized = false;
-            historyPath.length = 0;
-            updateTimestamps = [];
-            historyLine.setLatLngs([]);
-            predictionLine.setLatLngs([]);
-            predictedMarker.setLatLng([0,0]);
-
-            dashboard.className = 'searching';
-            statusText.textContent = '🔍 Поиск всех ГНСС...';
-            statusText.className = 'dash-value amber';
-            coordsText.textContent = 'Ожидание';
-            speedText.textContent = '—';
-            accuracyText.textContent = '—';
-            satellitesText.textContent = 'Поиск...';
-            predictText.textContent = '—';
-            updateConstellationBadges({ gps: false, glonass: false, galileo: false, beidou: false });
-
-            // Ключевые параметры для multi-GNSS
-            watchId = navigator.geolocation.watchPosition(
-                onGNSSSuccess,
-                onGNSSError,
-                {
-                    enableHighAccuracy: true,   // ВСЕ системы + максимальная точность
-                    timeout: 60000,             // минута на первый фикс (холодный старт)
-                    maximumAge: 0               // только свежие измерения
-                }
-            );
-
-            console.log('🛰 ГНСС-приёмник активирован. Режим: все системы');
-            console.log('   GPS (L1) + ГЛОНАСС (L1) + Galileo (E1) + BeiDou (B1)');
-        }
-
-        document.getElementById('restartBtn').addEventListener('click', startGNSS);
-
-        // Первый запуск
-        startGNSS();
-
-        // ==================== 7. СЛУЖЕБНАЯ ИНФОРМАЦИЯ В КОНСОЛЬ ====================
-        console.log('╔══════════════════════════════════╗');
-        console.log('║  🛰 ГНСС Трекер v2.0            ║');
-        console.log('║  Санкт-Петербург               ║');
-        console.log('║  GPS + ГЛОНАСС + Galileo + BeiDou ║');
-        console.log('║  Фильтр Калмана (CV)           ║');
-        console.log('╚══════════════════════════════════╝');
-        console.log('📱 Откройте на телефоне и выйдите на улицу');
-        console.log('📍 Первый фикс может занять до 60 секунд');
     </script>
 </body>
 </html>
