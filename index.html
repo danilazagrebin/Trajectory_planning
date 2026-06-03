@@ -44,21 +44,21 @@
 <canvas id="canvas"></canvas>
 
 <div class="compare" id="compareDiv">
-    <div><b>Extrapolation +3s</b></div>
-    <div class="row"><div><span class="badge blue"></span>Kalman</div><span id="errKal">-- m</span></div>
-    <div class="row"><div><span class="badge red"></span>Polynomial</div><span id="errPoly">-- m</span></div>
+    <div><b>Экстраполяция +3s</b></div>
+    <div class="row"><div><span class="badge blue"></span>Фильтр Калмана</div><span id="errKal">-- m</span></div>
+    <div class="row"><div><span class="badge red"></span>Полином</div><span id="errPoly">-- m</span></div>
     <hr>
     <div class="row"><div>Diff predictions:</div><span id="diffPred">-- m</span></div>
 </div>
 
 <div class="panel" id="info">
     <div><b id="coord">Waiting GPS</b></div>
-    <div class="row"><span>Speed:</span><span id="speedVal">-- km/h</span></div>
-    <div class="row"><span>Accuracy:</span><span id="accVal">-- m</span></div>
-    <div class="row"><span>Points:</span><span id="ptCount">0</span></div>
+    <div class="row"><span>Скорость:</span><span id="speedVal">-- km/h</span></div>
+    <div class="row"><span>Точность:</span><span id="accVal">-- m</span></div>
+    <div class="row"><span>Точки:</span><span id="ptCount">0</span></div>
 </div>
 
-<button class="btn" id="downloadBtn">Download CSV</button>
+<button class="btn" id="downloadBtn">Скачать CSV</button>
 
 <script>
 (function(){
