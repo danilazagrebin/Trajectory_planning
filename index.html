@@ -3,665 +3,352 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ГНСС Трекер | Калман vs Полиномиальная экстраполяция</title>
+    <title>GNSS Tracker: Kalman vs Polynomial</title>
     <style>
-        * {
-            box-sizing: border-box;
-            user-select: none;
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; font-family: monospace; background: #0a0f1e; overflow: hidden; }
+        canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #0f172a; display: block; }
+        
+        .panel {
+            position: fixed; bottom: 12px; left: 12px; right: 12px; max-width: 320px;
+            background: rgba(0,0,0,0.85); border-radius: 12px; padding: 10px 14px;
+            font-size: 12px; z-index: 100; color: #e2e8f0; border-left: 3px solid #3b82f6;
         }
-
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: 'Segoe UI', 'Roboto', 'Inter', system-ui, -apple-system, sans-serif;
-            background: #0a0f1e;
-            overflow: hidden;
-            height: 100vh;
-            color: #eef2ff;
+        .compare {
+            position: fixed; top: 12px; left: 12px;
+            background: rgba(0,0,0,0.8); border-radius: 12px; padding: 8px 14px;
+            font-size: 11px; z-index: 101; min-width: 220px; border-left: 3px solid #f97316;
         }
-
-        /* Canvas карта-схема */
-        #mapCanvas {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background: #0f172a;
-            display: block;
-            cursor: crosshair;
+        .btn {
+            position: fixed; top: 12px; right: 12px;
+            background: #1e293b; color: white; border: 1px solid #3b82f6;
+            padding: 8px 16px; border-radius: 24px; font-size: 12px;
+            cursor: pointer; z-index: 102; font-family: monospace;
         }
-
-        /* Панель информации (низ слева) */
-        .info-panel {
-            position: fixed;
-            bottom: 16px;
-            left: 12px;
-            right: 12px;
-            max-width: 340px;
-            background: rgba(10, 20, 35, 0.92);
-            backdrop-filter: blur(16px);
-            border-radius: 24px;
-            padding: 14px 18px;
-            border: 1px solid rgba(59, 130, 246, 0.4);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.4);
-            font-size: 13px;
-            font-weight: 500;
-            z-index: 100;
-            font-family: 'JetBrains Mono', monospace;
-            letter-spacing: 0.2px;
-        }
-
-        .info-panel .coord {
-            font-size: 15px;
-            font-weight: 600;
-            color: #a5f3fc;
-            margin-bottom: 6px;
-        }
-
-        .info-row {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 5px;
-            border-bottom: 1px dashed #334155;
-            padding-bottom: 4px;
-        }
-
-        /* Панель сравнения методов (верх лево) */
-        .compare-card {
-            position: fixed;
-            top: 16px;
-            left: 12px;
-            background: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(20px);
-            border-radius: 20px;
-            padding: 12px 18px;
-            min-width: 250px;
-            border-left: 4px solid #f97316;
-            z-index: 101;
-            font-size: 12px;
-            font-family: monospace;
-            box-shadow: 0 6px 18px rgba(0,0,0,0.3);
-            pointer-events: none;
-        }
-
-        .compare-card h4 {
-            margin: 0 0 8px 0;
-            font-size: 14px;
-            font-weight: 600;
-            color: #fbbf24;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .method-item {
-            display: flex;
-            justify-content: space-between;
-            margin: 6px 0;
-            align-items: baseline;
-        }
-
-        .badge {
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            border-radius: 10px;
-            margin-right: 8px;
-        }
-
-        .badge-blue { background: #3b82f6; box-shadow: 0 0 4px #3b82f6; }
-        .badge-red { background: #ef4444; box-shadow: 0 0 4px #ef4444; }
-        .badge-gray { background: #6b7280; }
-
-        .kalman-name { color: #60a5fa; font-weight: 500; }
-        .poly-name { color: #f87171; font-weight: 500; }
-
-        .error-val {
-            font-family: monospace;
-            font-weight: bold;
-        }
-
-        hr {
-            margin: 8px 0;
-            border-color: #334155;
-        }
-
-        .diff-text {
-            color: #facc15;
-            font-size: 13px;
-            font-weight: bold;
-        }
-
-        /* Кнопка скачивания */
-        .download-btn {
-            position: fixed;
-            top: 16px;
-            right: 16px;
-            background: #1e293b;
-            border: none;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 40px;
-            font-weight: 600;
-            font-size: 13px;
-            cursor: pointer;
-            backdrop-filter: blur(8px);
-            background: rgba(30, 41, 59, 0.9);
-            border: 1px solid #3b82f6;
-            z-index: 102;
-            transition: 0.1s;
-            font-family: inherit;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-
-        .download-btn:active {
-            transform: scale(0.96);
-            background: #0f172a;
-        }
-
-        /* легенда */
-        .legend {
-            position: fixed;
-            bottom: 20px;
-            right: 12px;
-            background: rgba(0,0,0,0.6);
-            backdrop-filter: blur(4px);
-            padding: 6px 12px;
-            border-radius: 40px;
-            font-size: 10px;
-            font-family: monospace;
-            z-index: 99;
-            display: flex;
-            gap: 16px;
-            pointer-events: none;
-        }
-
-        .legend span {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .status-led {
-            width: 8px;
-            height: 8px;
-            border-radius: 8px;
-            background: #3b82f6;
-            box-shadow: 0 0 4px #3b82f6;
-        }
+        .btn:active { background: #0f172a; }
+        .row { display: flex; justify-content: space-between; margin: 4px 0; }
+        .badge { display: inline-block; width: 8px; height: 8px; border-radius: 8px; margin-right: 6px; }
+        .blue { background: #3b82f6; }
+        .red { background: #ef4444; }
+        hr { margin: 6px 0; border-color: #334155; }
     </style>
 </head>
 <body>
 
-    <canvas id="mapCanvas"></canvas>
+<canvas id="canvas"></canvas>
 
-    <div class="compare-card" id="compareCard">
-        <h4>📡 Сравнение экстраполяции (+3 сек)</h4>
-        <div class="method-item">
-            <div><span class="badge badge-blue"></span><span class="kalman-name">Фильтр Калмана</span></div>
-            <div class="error-val" id="kalmanErrorDisplay">— м</div>
-        </div>
-        <div class="method-item">
-            <div><span class="badge badge-red"></span><span class="poly-name">Полином (2-степень)</span></div>
-            <div class="error-val" id="polyErrorDisplay">— м</div>
-        </div>
-        <hr>
-        <div class="method-item">
-            <div>📐 Расхождение прогнозов:</div>
-            <div class="diff-text" id="diffPredictions">— м</div>
-        </div>
-        <div style="font-size:9px; margin-top:6px; color:#94a3b8;">✅ Ошибка = расстояние до реальной позиции через 3с</div>
-    </div>
+<div class="compare" id="compareDiv">
+    <div><b>Extrapolation +3s</b></div>
+    <div class="row"><div><span class="badge blue"></span>Kalman</div><span id="errKal">-- m</span></div>
+    <div class="row"><div><span class="badge red"></span>Polynomial</div><span id="errPoly">-- m</span></div>
+    <hr>
+    <div class="row"><div>Diff predictions:</div><span id="diffPred">-- m</span></div>
+</div>
 
-    <div class="info-panel" id="infoPanel">
-        <div class="coord" id="coordText">📍 Ожидание GPS...</div>
-        <div class="info-row"><span>🚗 Скорость:</span><span id="speedVal">-- км/ч</span></div>
-        <div class="info-row"><span>🎯 Точность:</span><span id="accVal">-- м</span></div>
-        <div class="info-row"><span>🔵 Прогноз Калмана (вектор):</span><span id="kalmanDistSpan">-- м</span></div>
-        <div class="info-row"><span>📊 История точек:</span><span id="pointsCount">0</span></div>
-    </div>
+<div class="panel" id="info">
+    <div><b id="coord">Waiting GPS</b></div>
+    <div class="row"><span>Speed:</span><span id="speedVal">-- km/h</span></div>
+    <div class="row"><span>Accuracy:</span><span id="accVal">-- m</span></div>
+    <div class="row"><span>Points:</span><span id="ptCount">0</span></div>
+</div>
 
-    <button class="download-btn" id="downloadCsvBtn">📥 Скачать CSV (лог)</button>
-    <div class="legend">
-        <span><div class="status-led" style="background:#3b82f6;"></div> Текущая позиция</span>
-        <span><div class="status-led" style="background:#60a5fa; box-shadow:0 0 4px #3b82f6;"></div> Калман (+3с)</span>
-        <span><div class="status-led" style="background:#ef4444;"></div> Полином (+3с)</span>
-        <span><div class="status-led" style="background:#a5f3fc;"></div> История трека</span>
-    </div>
+<button class="btn" id="downloadBtn">Download CSV</button>
 
-    <script>
-        (function(){
-            // ---------- 1. CANVAS КАРТА (без leaflet) ----------
-            const canvas = document.getElementById('mapCanvas');
-            let ctx = canvas.getContext('2d');
-            
-            let viewCenter = { lat: 59.9343, lon: 30.3351 };
-            let zoom = 16;      // условный масштаб: пикселей на градус ~ 2^zoom * 2.5
-            const TILE_PX_PER_DEG = 111319; // метры в градусе ~111км, но для отображения пропорций
-            
-            function latLonToCanvas(lat, lon) {
-                const scale = Math.pow(2, zoom) * 2.2;
-                const x = (lon - viewCenter.lon) * scale * Math.cos(viewCenter.lat * Math.PI/180) * 70 + canvas.width/2;
-                const y = (viewCenter.lat - lat) * scale * 80 + canvas.height/2;
-                return { x, y };
+<script>
+(function(){
+    // ----- CANVAS -----
+    const canvas = document.getElementById('canvas');
+    let ctx = canvas.getContext('2d');
+    let view = { lat: 59.9343, lon: 30.3351 };
+    let zoom = 16;
+    
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        draw();
+    }
+    
+    function coordToCanvas(lat, lon) {
+        const scale = Math.pow(2, zoom) * 2.2;
+        const x = (lon - view.lon) * scale * Math.cos(view.lat * Math.PI/180) * 70 + canvas.width/2;
+        const y = (view.lat - lat) * scale * 80 + canvas.height/2;
+        return { x, y };
+    }
+    
+    let historyLine = [];     // [[lat,lon]]
+    let currentPos = { lat: 59.9343, lon: 30.3351 };
+    let predKal = null;
+    let predPoly = null;
+    
+    function draw() {
+        if (!ctx) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // grid
+        ctx.strokeStyle = "#1e293b";
+        ctx.lineWidth = 0.5;
+        for (let i = -4; i <= 4; i++) {
+            let lonLine = view.lon + i * 0.002;
+            let p1 = coordToCanvas(view.lat - 0.02, lonLine);
+            let p2 = coordToCanvas(view.lat + 0.02, lonLine);
+            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            let latLine = view.lat + i * 0.002;
+            let p3 = coordToCanvas(latLine, view.lon - 0.02);
+            let p4 = coordToCanvas(latLine, view.lon + 0.02);
+            ctx.beginPath(); ctx.moveTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y); ctx.stroke();
+        }
+        
+        // history track
+        if (historyLine.length > 1) {
+            ctx.beginPath();
+            ctx.strokeStyle = "#3b82f6";
+            ctx.lineWidth = 2.5;
+            let first = coordToCanvas(historyLine[0][0], historyLine[0][1]);
+            ctx.moveTo(first.x, first.y);
+            for (let i=1; i<historyLine.length; i++) {
+                let p = coordToCanvas(historyLine[i][0], historyLine[i][1]);
+                ctx.lineTo(p.x, p.y);
             }
-            
-            function resizeCanvas() {
-                canvas.width = window.innerWidth;
-                canvas.height = window.innerHeight;
-                drawAll();
+            ctx.stroke();
+        }
+        
+        // prediction lines
+        if (currentPos && predKal) {
+            ctx.beginPath(); ctx.setLineDash([6,6]);
+            ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2;
+            let from = coordToCanvas(currentPos.lat, currentPos.lon);
+            let to = coordToCanvas(predKal.lat, predKal.lon);
+            ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+        }
+        if (currentPos && predPoly) {
+            ctx.beginPath(); ctx.setLineDash([4,8]);
+            ctx.strokeStyle = "#f87171"; ctx.lineWidth = 2;
+            let from = coordToCanvas(currentPos.lat, currentPos.lon);
+            let to = coordToCanvas(predPoly.lat, predPoly.lon);
+            ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        
+        // markers
+        if (currentPos) {
+            let p = coordToCanvas(currentPos.lat, currentPos.lon);
+            ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, 2*Math.PI);
+            ctx.fillStyle = "#3b82f6"; ctx.fill();
+            ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, 2*Math.PI);
+            ctx.fillStyle = "white"; ctx.fill();
+        }
+        if (predKal) {
+            let p = coordToCanvas(predKal.lat, predKal.lon);
+            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 2*Math.PI);
+            ctx.fillStyle = "#3b82f6"; ctx.globalAlpha = 0.6; ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+        if (predPoly) {
+            let p = coordToCanvas(predPoly.lat, predPoly.lon);
+            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 2*Math.PI);
+            ctx.fillStyle = "#ef4444"; ctx.globalAlpha = 0.6; ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+    }
+    
+    function setView(lat, lon) {
+        view.lat = lat; view.lon = lon;
+        resize();
+    }
+    window.addEventListener('resize', resize);
+    
+    // ----- Kalman Filter -----
+    class Kalman {
+        constructor() {
+            this.lat=0; this.lon=0; this.vLat=0; this.vLon=0; this.P=1; this.ok=false;
+        }
+        predict(dt) { if(this.ok && dt>0) { this.lat+=this.vLat*dt; this.lon+=this.vLon*dt; this.P+=0.6*dt; } }
+        update(lat, lon, dt, spd=null, hdg=null) {
+            if(!this.ok) { this.lat=lat; this.lon=lon; this.ok=true; return; }
+            if(spd && hdg && dt>0.05) {
+                let vx = spd*Math.cos(hdg)/111111;
+                let vy = spd*Math.sin(hdg)/(111111*Math.cos(this.lat*Math.PI/180));
+                this.vLat = 0.7*this.vLat + 0.3*vx;
+                this.vLon = 0.7*this.vLon + 0.3*vy;
+            } else if(dt>0.1) {
+                let nvx = (lat-this.lat)/dt, nvy = (lon-this.lon)/dt;
+                this.vLat = 0.65*this.vLat + 0.35*nvx;
+                this.vLon = 0.65*this.vLon + 0.35*nvy;
             }
-            
-            // Данные для отрисовки
-            let historyLinePoints = [];   // массив [lat,lon]
-            let currentPos = { lat: 59.9343, lon: 30.3351 };
-            let kalmanPredPoint = null;
-            let polyPredPoint = null;
-            
-            function drawAll() {
-                if (!ctx) return;
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                
-                // Рисуем сетку (опционально)
-                ctx.strokeStyle = "#1e293b";
-                ctx.lineWidth = 0.5;
-                for (let i = -4; i <= 4; i++) {
-                    const lonLine = viewCenter.lon + i * 0.0015;
-                    const start = latLonToCanvas(viewCenter.lat - 0.02, lonLine);
-                    const end = latLonToCanvas(viewCenter.lat + 0.02, lonLine);
-                    ctx.beginPath();
-                    ctx.moveTo(start.x, start.y);
-                    ctx.lineTo(end.x, end.y);
-                    ctx.stroke();
-                    
-                    const latLine = viewCenter.lat + i * 0.0015;
-                    const start2 = latLonToCanvas(latLine, viewCenter.lon - 0.02);
-                    const end2 = latLonToCanvas(latLine, viewCenter.lon + 0.02);
-                    ctx.beginPath();
-                    ctx.moveTo(start2.x, start2.y);
-                    ctx.lineTo(end2.x, end2.y);
-                    ctx.stroke();
-                }
-                
-                // 1. История трека (синяя линия)
-                if (historyLinePoints.length > 1) {
-                    ctx.beginPath();
-                    ctx.strokeStyle = "#3b82f6";
-                    ctx.lineWidth = 3;
-                    ctx.lineJoin = "round";
-                    ctx.lineCap = "round";
-                    const first = latLonToCanvas(historyLinePoints[0][0], historyLinePoints[0][1]);
-                    ctx.moveTo(first.x, first.y);
-                    for (let i = 1; i < historyLinePoints.length; i++) {
-                        const p = latLonToCanvas(historyLinePoints[i][0], historyLinePoints[i][1]);
-                        ctx.lineTo(p.x, p.y);
-                    }
-                    ctx.stroke();
-                }
-                
-                // 2. Линии прогнозов (пунктир)
-                if (currentPos && kalmanPredPoint) {
-                    ctx.beginPath();
-                    ctx.setLineDash([8, 8]);
-                    ctx.strokeStyle = "#60a5fa";
-                    ctx.lineWidth = 2.5;
-                    const from = latLonToCanvas(currentPos.lat, currentPos.lon);
-                    const toKal = latLonToCanvas(kalmanPredPoint.lat, kalmanPredPoint.lon);
-                    ctx.moveTo(from.x, from.y);
-                    ctx.lineTo(toKal.x, toKal.y);
-                    ctx.stroke();
-                }
-                
-                if (currentPos && polyPredPoint && polyPredPoint.lat !== null) {
-                    ctx.beginPath();
-                    ctx.setLineDash([5, 10]);
-                    ctx.strokeStyle = "#f87171";
-                    ctx.lineWidth = 2.5;
-                    const from = latLonToCanvas(currentPos.lat, currentPos.lon);
-                    const toPoly = latLonToCanvas(polyPredPoint.lat, polyPredPoint.lon);
-                    ctx.moveTo(from.x, from.y);
-                    ctx.lineTo(toPoly.x, toPoly.y);
-                    ctx.stroke();
-                }
-                ctx.setLineDash([]);
-                
-                // 3. Маркеры
-                // текущая позиция (большой круг)
-                if (currentPos) {
-                    const cur = latLonToCanvas(currentPos.lat, currentPos.lon);
-                    ctx.shadowBlur = 0;
-                    ctx.beginPath();
-                    ctx.arc(cur.x, cur.y, 8, 0, 2*Math.PI);
-                    ctx.fillStyle = "#3b82f6";
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.arc(cur.x, cur.y, 3, 0, 2*Math.PI);
-                    ctx.fillStyle = "white";
-                    ctx.fill();
-                }
-                
-                // Прогноз Калмана
-                if (kalmanPredPoint) {
-                    const kp = latLonToCanvas(kalmanPredPoint.lat, kalmanPredPoint.lon);
-                    ctx.beginPath();
-                    ctx.arc(kp.x, kp.y, 7, 0, 2*Math.PI);
-                    ctx.fillStyle = "#3b82f6";
-                    ctx.globalAlpha = 0.6;
-                    ctx.fill();
-                    ctx.globalAlpha = 1;
-                    ctx.beginPath();
-                    ctx.arc(kp.x, kp.y, 3, 0, 2*Math.PI);
-                    ctx.fillStyle = "#93c5fd";
-                    ctx.fill();
-                }
-                
-                // Прогноз полинома
-                if (polyPredPoint && polyPredPoint.lat !== null) {
-                    const pp = latLonToCanvas(polyPredPoint.lat, polyPredPoint.lon);
-                    ctx.beginPath();
-                    ctx.arc(pp.x, pp.y, 7, 0, 2*Math.PI);
-                    ctx.fillStyle = "#ef4444";
-                    ctx.globalAlpha = 0.55;
-                    ctx.fill();
-                    ctx.globalAlpha = 1;
-                    ctx.beginPath();
-                    ctx.arc(pp.x, pp.y, 3, 0, 2*Math.PI);
-                    ctx.fillStyle = "#fecaca";
-                    ctx.fill();
-                }
+            let K = this.P/(this.P+0.6);
+            this.lat += K*(lat-this.lat);
+            this.lon += K*(lon-this.lon);
+            this.P *= (1-K);
+        }
+        extrapolate(sec) { return [this.lat+this.vLat*sec, this.lon+this.vLon*sec]; }
+        get() { return {lat:this.lat, lon:this.lon}; }
+    }
+    
+    // ----- Polynomial (quadratic) -----
+    function fitQuadratic(points, targ) {
+        if(points.length<2) return points.length?points[0].coord:0;
+        if(points.length===2) {
+            let slope = (points[1].coord-points[0].coord)/(points[1].t-points[0].t);
+            return points[1].coord + slope*targ;
+        }
+        let sT4=0,sT3=0,sT2=0,sT1=0,sT0=points.length;
+        let sYt2=0,sYt=0,sY=0;
+        for(let p of points) {
+            let t=p.t, y=p.coord, t2=t*t, t3=t2*t, t4=t3*t;
+            sT4+=t4; sT3+=t3; sT2+=t2; sT1+=t;
+            sYt2+=y*t2; sYt+=y*t; sY+=y;
+        }
+        let det = (a,b,c,d,e,f,g,h,i)=> a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);
+        let A = [[sT4,sT3,sT2],[sT3,sT2,sT1],[sT2,sT1,sT0]];
+        let B = [sYt2,sYt,sY];
+        let D = det(A[0][0],A[0][1],A[0][2],A[1][0],A[1][1],A[1][2],A[2][0],A[2][1],A[2][2]);
+        if(Math.abs(D)<1e-8) {
+            let last=points[points.length-1], first=points[0];
+            let slope = (last.coord-first.coord)/(last.t-first.t);
+            return last.coord + slope*targ;
+        }
+        let Da = det(B[0],A[0][1],A[0][2],B[1],A[1][1],A[1][2],B[2],A[2][1],A[2][2]);
+        let Db = det(A[0][0],B[0],A[0][2],A[1][0],B[1],A[1][2],A[2][0],B[2],A[2][2]);
+        let Dc = det(A[0][0],A[0][1],B[0],A[1][0],A[1][1],B[1],A[2][0],A[2][1],B[2]);
+        let a_coef=Da/D, b_coef=Db/D, c_coef=Dc/D;
+        return a_coef*targ*targ + b_coef*targ + c_coef;
+    }
+    
+    function polyExtrapolate(history, nowSec, horizon=3) {
+        if(history.length<2) return null;
+        let recent = history.slice(-12);
+        let latPts=[], lonPts=[];
+        for(let p of recent) {
+            let dt = p.time - nowSec;
+            latPts.push({t:dt, coord:p.lat});
+            lonPts.push({t:dt, coord:p.lon});
+        }
+        return { lat: fitQuadratic(latPts, horizon), lon: fitQuadratic(lonPts, horizon) };
+    }
+    
+    // ----- Helpers -----
+    function dist(lat1,lon1,lat2,lon2) {
+        const R=6371000, p1=lat1*Math.PI/180, p2=lat2*Math.PI/180;
+        let dp=(lat2-lat1)*Math.PI/180, dl=(lon2-lon1)*Math.PI/180;
+        let a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+        return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+    
+    let kalman = new Kalman();
+    let historyPoints = [];   // {lat,lon,time}
+    let logData = [];
+    let lastTime = null;
+    let currentGps = null;
+    const HORIZON = 3.0;
+    
+    function addLog(ts, lat, lon, spd, acc, kalLat, kalLon, polLat, polLon) {
+        logData.push({
+            time: new Date(ts*1000).toISOString(),
+            lat, lon,
+            speed: spd? (spd*3.6).toFixed(1): '',
+            acc: acc? acc.toFixed(1): '',
+            kalLat: kalLat??'', kalLon: kalLon??'',
+            polLat: polLat??'', polLon: polLon??''
+        });
+    }
+    
+    function updateUIandCanvas() {
+        if(currentPos) {
+            document.getElementById('coord').innerHTML = `${currentPos.lat.toFixed(6)}, ${currentPos.lon.toFixed(6)}`;
+            document.getElementById('ptCount').innerHTML = historyPoints.length;
+        }
+        draw();
+    }
+    
+    function onPosition(pos) {
+        let {latitude, longitude, speed, heading, accuracy} = pos.coords;
+        let now = pos.timestamp/1000;
+        let spdMps = (speed!=null)? speed : null;
+        let hdgRad = (heading!=null && spdMps>0.2)? heading*Math.PI/180 : null;
+        
+        if(lastTime===null) {
+            lastTime = now;
+            kalman.update(latitude, longitude, 0.1, spdMps, hdgRad);
+            currentPos = kalman.get();
+            historyPoints.push({lat:currentPos.lat, lon:currentPos.lon, time:now});
+            setView(currentPos.lat, currentPos.lon);
+            updateUIandCanvas();
+            addLog(now, currentPos.lat, currentPos.lon, spdMps, accuracy, null, null, null, null);
+            return;
+        }
+        
+        let dt = now - lastTime;
+        if(dt<=0.01) return;
+        lastTime = now;
+        
+        kalman.predict(dt);
+        kalman.update(latitude, longitude, dt, spdMps, hdgRad);
+        currentPos = kalman.get();
+        historyPoints.push({lat:currentPos.lat, lon:currentPos.lon, time:now});
+        if(historyPoints.length>40) historyPoints.shift();
+        historyLine = historyPoints.map(p=>[p.lat, p.lon]);
+        
+        // predictions
+        let [kLat, kLon] = kalman.extrapolate(HORIZON);
+        predKal = {lat:kLat, lon:kLon};
+        let polyPred = (historyPoints.length>=3) ? polyExtrapolate(historyPoints, now, HORIZON) : null;
+        predPoly = polyPred;
+        
+        // error calculation (look back)
+        let errK=null, errP=null;
+        let targetT = now - HORIZON;
+        for(let i=logData.length-1; i>=0; i--) {
+            let e = logData[i];
+            if(Math.abs(new Date(e.time).getTime()/1000 - targetT) < 0.3 && e.kalLat) {
+                errK = dist(latitude, longitude, parseFloat(e.kalLat), parseFloat(e.kalLon));
+                if(e.polLat) errP = dist(latitude, longitude, parseFloat(e.polLat), parseFloat(e.polLon));
+                break;
             }
-            
-            // центрирование карты по позиции
-            function setViewTo(lat, lon) {
-                viewCenter.lat = lat;
-                viewCenter.lon = lon;
-                resizeCanvas();
-            }
-            
-            window.addEventListener('resize', () => {
-                resizeCanvas();
-            });
-            
-            // ---------- 2. ФИЛЬТР КАЛМАНА ----------
-            class KalmanTracker {
-                constructor() {
-                    this.lat = 0; this.lon = 0;
-                    this.vLat = 0; this.vLon = 0;
-                    this.P = 1.0;
-                    this.initialized = false;
-                }
-                predict(dt) {
-                    if (!this.initialized || dt <= 0) return;
-                    this.lat += this.vLat * dt;
-                    this.lon += this.vLon * dt;
-                    this.P += 0.8 * dt;
-                }
-                update(gpsLat, gpsLon, dt, speedMps = null, headingRad = null) {
-                    if (!this.initialized) {
-                        this.lat = gpsLat; this.lon = gpsLon;
-                        this.initialized = true;
-                        return;
-                    }
-                    if (speedMps !== null && headingRad !== null && dt > 0.05) {
-                        const vx = speedMps * Math.cos(headingRad) / 111111;
-                        const vy = speedMps * Math.sin(headingRad) / (111111 * Math.cos(this.lat * Math.PI/180));
-                        this.vLat = 0.7 * this.vLat + 0.3 * vx;
-                        this.vLon = 0.7 * this.vLon + 0.3 * vy;
-                    } else if (dt > 0.1) {
-                        const nvLat = (gpsLat - this.lat) / dt;
-                        const nvLon = (gpsLon - this.lon) / dt;
-                        this.vLat = 0.65 * this.vLat + 0.35 * nvLat;
-                        this.vLon = 0.65 * this.vLon + 0.35 * nvLon;
-                    }
-                    const K = this.P / (this.P + 0.6);
-                    this.lat += K * (gpsLat - this.lat);
-                    this.lon += K * (gpsLon - this.lon);
-                    this.P *= (1 - K);
-                }
-                extrapolate(seconds) {
-                    if (!this.initialized) return [0,0];
-                    return [this.lat + this.vLat * seconds, this.lon + this.vLon * seconds];
-                }
-                getPosition() {
-                    return { lat: this.lat, lon: this.lon };
-                }
-            }
-            
-            // ---------- 3. ПОЛИНОМИАЛЬНАЯ ЭКСТРАПОЛЯЦИЯ (квадратичная) ----------
-            function fitQuadratic(points, targetOffsetSec) {
-                if (points.length < 2) return points.length === 1 ? points[0].coord : 0;
-                if (points.length === 2) {
-                    const slope = (points[1].coord - points[0].coord) / (points[1].t - points[0].t);
-                    return points[1].coord + slope * targetOffsetSec;
-                }
-                let sumT4=0, sumT3=0, sumT2=0, sumT1=0, sumT0=points.length;
-                let sumYt2=0, sumYt=0, sumY=0;
-                for(let p of points) {
-                    const t = p.t;
-                    const y = p.coord;
-                    const t2 = t*t;
-                    const t3 = t2*t;
-                    const t4 = t3*t;
-                    sumT4 += t4; sumT3 += t3; sumT2 += t2; sumT1 += t;
-                    sumYt2 += y*t2; sumYt += y*t; sumY += y;
-                }
-                const det = (a,b,c,d,e,f,g,h,i) => a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
-                const A = [[sumT4, sumT3, sumT2],[sumT3, sumT2, sumT1],[sumT2, sumT1, sumT0]];
-                const B = [sumYt2, sumYt, sumY];
-                const detA = det(A[0][0],A[0][1],A[0][2],A[1][0],A[1][1],A[1][2],A[2][0],A[2][1],A[2][2]);
-                if (Math.abs(detA) < 1e-8) {
-                    const last = points[points.length-1];
-                    const first = points[0];
-                    const slope = (last.coord - first.coord) / (last.t - first.t);
-                    return last.coord + slope * targetOffsetSec;
-                }
-                const det_a = det(B[0],A[0][1],A[0][2],B[1],A[1][1],A[1][2],B[2],A[2][1],A[2][2]);
-                const det_b = det(A[0][0],B[0],A[0][2],A[1][0],B[1],A[1][2],A[2][0],B[2],A[2][2]);
-                const det_c = det(A[0][0],A[0][1],B[0],A[1][0],A[1][1],B[1],A[2][0],A[2][1],B[2]);
-                const a_coef = det_a/detA, b_coef = det_b/detA, c_coef = det_c/detA;
-                return a_coef*targetOffsetSec*targetOffsetSec + b_coef*targetOffsetSec + c_coef;
-            }
-            
-            function polynomialExtrapolate(historyArray, currentTimeSec, horizonSec = 3.0) {
-                if (historyArray.length < 2) return null;
-                const recent = historyArray.slice(-12);
-                const pointsLat = [], pointsLon = [];
-                for(let p of recent) {
-                    const dt = p.timeSec - currentTimeSec;
-                    pointsLat.push({ t: dt, coord: p.lat });
-                    pointsLon.push({ t: dt, coord: p.lon });
-                }
-                const predLat = fitQuadratic(pointsLat, horizonSec);
-                const predLon = fitQuadratic(pointsLon, horizonSec);
-                return { lat: predLat, lon: predLon };
-            }
-            
-            // ---------- 4. ОСНОВНАЯ ЛОГИКА И ХРАНЕНИЕ ----------
-            const kalman = new KalmanTracker();
-            let historyPositions = [];   // {lat, lon, timeSec}
-            let lastTimestampSec = null;
-            let logEntries = [];           // для CSV
-            
-            let currentGpsRaw = null;
-            
-            // для вычисления ошибок (отложенных)
-            let pendingPredictions = []; // храним предсказания на момент времени
-            
-            const HORIZON = 3.0;  // 3 секунды
-            
-            function haversineDistance(lat1, lon1, lat2, lon2) {
-                const R = 6371000;
-                const phi1 = lat1 * Math.PI / 180;
-                const phi2 = lat2 * Math.PI / 180;
-                const dphi = (lat2-lat1)*Math.PI/180;
-                const dlam = (lon2-lon1)*Math.PI/180;
-                const a = Math.sin(dphi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dlam/2)**2;
-                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            }
-            
-            function updateUIandCanvas() {
-                if (currentPos) {
-                    const coordText = `${currentPos.lat.toFixed(6)}, ${currentPos.lon.toFixed(6)}`;
-                    document.getElementById('coordText').innerHTML = `📍 ${coordText}`;
-                    document.getElementById('pointsCount').innerText = historyPositions.length;
-                }
-                drawAll();
-            }
-            
-            function onGNSSPosition(pos) {
-                const { latitude, longitude, speed, heading, accuracy } = pos.coords;
-                const nowSec = pos.timestamp / 1000;
-                let speedMps = (speed !== null && speed !== undefined) ? speed : null;
-                let headingRad = (heading !== null && speedMps > 0.2) ? heading * Math.PI/180 : null;
-                
-                if (lastTimestampSec === null) {
-                    lastTimestampSec = nowSec;
-                    kalman.update(latitude, longitude, 0.1, speedMps, headingRad);
-                    const initPos = kalman.getPosition();
-                    currentPos = { lat: initPos.lat, lon: initPos.lon };
-                    historyPositions.push({ lat: currentPos.lat, lon: currentPos.lon, timeSec: nowSec });
-                    setViewTo(currentPos.lat, currentPos.lon);
-                    updateUIandCanvas();
-                    // лог
-                    logEntries.push(createLogEntry(nowSec, currentPos.lat, currentPos.lon, speedMps, accuracy, null, null, null, null));
-                    return;
-                }
-                
-                let dt = nowSec - lastTimestampSec;
-                if (dt <= 0.01) return;
-                lastTimestampSec = nowSec;
-                
-                // Обновление Калмана
-                kalman.predict(dt);
-                kalman.update(latitude, longitude, dt, speedMps, headingRad);
-                const filteredPos = kalman.getPosition();
-                currentPos = { lat: filteredPos.lat, lon: filteredPos.lon };
-                
-                // Сохраняем историю для полинома
-                historyPositions.push({ lat: currentPos.lat, lon: currentPos.lon, timeSec: nowSec });
-                if (historyPositions.length > 35) historyPositions.shift();
-                
-                // Обновляем линию трека для Canvas
-                historyLinePoints = historyPositions.map(p => [p.lat, p.lon]);
-                
-                // Прогноз Калмана
-                const [kalLat, kalLon] = kalman.extrapolate(HORIZON);
-                kalmanPredPoint = { lat: kalLat, lon: kalLon };
-                
-                // Прогноз полинома
-                let polyPred = null;
-                if (historyPositions.length >= 3) {
-                    polyPred = polynomialExtrapolate(historyPositions, nowSec, HORIZON);
-                }
-                polyPredPoint = polyPred ? { lat: polyPred.lat, lon: polyPred.lon } : null;
-                
-                // === Вычисление ошибок (ретроспективно) ===
-                let kalmanError = null;
-                let polyError = null;
-                // ищем в логах предсказание, сделанное (nowSec - HORIZON) секунд назад
-                const targetTime = nowSec - HORIZON;
-                for (let i = logEntries.length-1; i >= 0; i--) {
-                    const entry = logEntries[i];
-                    if (Math.abs(entry.rawTimeSec - targetTime) < 0.25 && entry.kalmanPredLat !== null) {
-                        const realLat = latitude;
-                        const realLon = longitude;
-                        kalmanError = haversineDistance(realLat, realLon, entry.kalmanPredLat, entry.kalmanPredLon);
-                        if (entry.polyPredLat !== null) {
-                            polyError = haversineDistance(realLat, realLon, entry.polyPredLat, entry.polyPredLon);
-                        }
-                        break;
-                    }
-                }
-                
-                // Обновление панели сравнения
-                const kalmanSpan = document.getElementById('kalmanErrorDisplay');
-                const polySpan = document.getElementById('polyErrorDisplay');
-                const diffSpan = document.getElementById('diffPredictions');
-                
-                if (kalmanError !== null) {
-                    kalmanSpan.innerHTML = `${kalmanError.toFixed(1)} м`;
-                    kalmanSpan.style.color = kalmanError < 6 ? '#4ade80' : (kalmanError < 18 ? '#facc15' : '#f87171');
-                } else { kalmanSpan.innerHTML = '— м'; kalmanSpan.style.color = '#aaa'; }
-                
-                if (polyError !== null && polyPredPoint) {
-                    polySpan.innerHTML = `${polyError.toFixed(1)} м`;
-                    polySpan.style.color = polyError < 6 ? '#4ade80' : (polyError < 18 ? '#facc15' : '#f87171');
-                } else { polySpan.innerHTML = (historyPositions.length>=3 ? 'сбор..' : 'ждём точки'); polySpan.style.color = '#aaa'; }
-                
-                // расхождение прогнозов
-                if (kalmanPredPoint && polyPredPoint) {
-                    const diff = haversineDistance(kalmanPredPoint.lat, kalmanPredPoint.lon, polyPredPoint.lat, polyPredPoint.lon);
-                    diffSpan.innerHTML = `${diff.toFixed(1)} м`;
-                } else { diffSpan.innerHTML = '— м'; }
-                
-                // панель скорости / прогноз вектор
-                const speedKmh = speedMps ? (speedMps*3.6).toFixed(1) : '--';
-                document.getElementById('speedVal').innerHTML = `${speedKmh} км/ч`;
-                document.getElementById('accVal').innerHTML = accuracy ? `${accuracy.toFixed(1)} м` : '--';
-                const kalmanVecDist = haversineDistance(currentPos.lat, currentPos.lon, kalmanPredPoint.lat, kalmanPredPoint.lon);
-                document.getElementById('kalmanDistSpan').innerHTML = `${kalmanVecDist.toFixed(1)} м`;
-                
-                // Центрирование карты по текущей позиции (плавно)
-                setViewTo(currentPos.lat, currentPos.lon);
-                updateUIandCanvas();
-                
-                // Логирование в массив
-                logEntries.push(createLogEntry(
-                    nowSec, currentPos.lat, currentPos.lon, speedMps, accuracy,
-                    kalmanPredPoint.lat, kalmanPredPoint.lon,
-                    polyPredPoint ? polyPredPoint.lat : null, polyPredPoint ? polyPredPoint.lon : null
-                ));
-            }
-            
-            function createLogEntry(tsSec, lat, lon, speedMps, accuracy, kalLat, kalLon, polyLat, polyLon) {
-                return {
-                    timestamp: new Date(tsSec*1000).toISOString(),
-                    rawTimeSec: tsSec,
-                    lat, lon,
-                    speed_kmh: speedMps ? (speedMps*3.6).toFixed(2) : '',
-                    accuracy_m: accuracy ? accuracy.toFixed(1) : '',
-                    kalmanPredLat: kalLat !== null ? kalLat : '',
-                    kalmanPredLon: kalLon !== null ? kalLon : '',
-                    polyPredLat: polyLat !== null ? polyLat : '',
-                    polyPredLon: polyLon !== null ? polyLon : ''
-                };
-            }
-            
-            function onGeoError(err) {
-                document.getElementById('coordText').innerHTML = '❌ Ошибка GNSS';
-                console.warn(err);
-            }
-            
-            // Скачивание CSV
-            document.getElementById('downloadCsvBtn').addEventListener('click', () => {
-                if (logEntries.length === 0) { alert('Нет данных для экспорта'); return; }
-                let csvRows = ["timestamp,lat,lon,speed_kmh,accuracy_m,kalman_pred_lat,kalman_pred_lon,poly_pred_lat,poly_pred_lon"];
-                for (let e of logEntries) {
-                    csvRows.push(`${e.timestamp},${e.lat},${e.lon},${e.speed_kmh},${e.accuracy_m},${e.kalmanPredLat},${e.kalmanPredLon},${e.polyPredLat},${e.polyPredLon}`);
-                }
-                const blob = new Blob([csvRows.join("\n")], {type: "text/csv"});
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `gnss_compare_${new Date().toISOString().slice(0,19)}.csv`;
-                a.click();
-                URL.revokeObjectURL(url);
-            });
-            
-            // Запуск трекера
-            if (navigator.geolocation) {
-                navigator.geolocation.watchPosition(onGNSSPosition, onGeoError, {
-                    enableHighAccuracy: true,
-                    timeout: 8000,
-                    maximumAge: 0
-                });
-            } else {
-                document.getElementById('coordText').innerHTML = '⚠️ Браузер не поддерживает Geolocation';
-            }
-            
-            resizeCanvas();
-        })();
-    </script>
+        }
+        document.getElementById('errKal').innerHTML = (errK!=null)? errK.toFixed(1)+' m' : '-- m';
+        document.getElementById('errPoly').innerHTML = (errP!=null && predPoly)? errP.toFixed(1)+' m' : (historyPoints.length>=3? '...' : '-- m');
+        if(predKal && predPoly) {
+            let diffD = dist(predKal.lat, predKal.lon, predPoly.lat, predPoly.lon);
+            document.getElementById('diffPred').innerHTML = diffD.toFixed(1)+' m';
+        } else document.getElementById('diffPred').innerHTML = '-- m';
+        
+        let speedKmh = spdMps ? (spdMps*3.6).toFixed(1) : '--';
+        document.getElementById('speedVal').innerHTML = speedKmh+' km/h';
+        document.getElementById('accVal').innerHTML = accuracy ? accuracy.toFixed(1)+' m' : '--';
+        
+        setView(currentPos.lat, currentPos.lon);
+        updateUIandCanvas();
+        
+        addLog(now, currentPos.lat, currentPos.lon, spdMps, accuracy, kLat, kLon, 
+               polyPred? polyPred.lat:null, polyPred? polyPred.lon:null);
+    }
+    
+    function onError(e) {
+        document.getElementById('coord').innerHTML = 'GPS error';
+    }
+    
+    // CSV download
+    document.getElementById('downloadBtn').onclick = () => {
+        if(logData.length===0) return alert('No data');
+        let rows = ['timestamp,lat,lon,speed_kmh,accuracy_m,kalman_lat,kalman_lon,poly_lat,poly_lon'];
+        for(let d of logData) {
+            rows.push(`${d.time},${d.lat},${d.lon},${d.speed},${d.acc},${d.kalLat},${d.kalLon},${d.polLat},${d.polLon}`);
+        }
+        let blob = new Blob([rows.join('\n')], {type:'text/csv'});
+        let a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `gnss_${Date.now()}.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+    
+    if(navigator.geolocation) {
+        navigator.geolocation.watchPosition(onPosition, onError, {enableHighAccuracy:true, timeout:8000, maximumAge:0});
+    } else {
+        document.getElementById('coord').innerHTML = 'No geolocation';
+    }
+    resize();
+})();
+</script>
 </body>
 </html>
