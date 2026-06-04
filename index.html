@@ -8,32 +8,27 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { 
             font-family: monospace; background: #0a0f1e; overflow: hidden;
-            touch-action: none; -webkit-touch-callout: none;
-            -webkit-user-select: none; user-select: none;
+            touch-action: none; -webkit-user-select: none; user-select: none;
         }
-        canvas { 
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
-            display: block; touch-action: none;
-        }
-        
+        canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; display: block; }
         .panel {
             position: fixed; bottom: 12px; left: 12px; right: 12px; max-width: 300px;
             background: rgba(0,0,0,0.85); border-radius: 12px; padding: 10px 14px;
             font-size: 11px; z-index: 100; color: #e2e8f0; border-left: 3px solid #3b82f6;
-            backdrop-filter: blur(4px);
         }
         .compare {
             position: fixed; top: 12px; left: 12px;
             background: rgba(20, 30, 45, 0.95); border-radius: 12px; padding: 8px 14px;
-            font-size: 10px; z-index: 101; border-left: 3px solid #f97316;
-            color: #f1f5f9; backdrop-filter: blur(4px);
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            font-size: 10px; z-index: 101; border-left: 3px solid #f97316; color: #f1f5f9;
         }
-        .help {
-            position: fixed; top: 12px; right: 12px;
-            background: rgba(0,0,0,0.7); color: #94a3b8; padding: 6px 10px;
-            border-radius: 8px; font-size: 10px; z-index: 102;
-            pointer-events: none;
+        .zoom-btns {
+            position: fixed; right: 12px; top: 50%; transform: translateY(-50%);
+            display: flex; flex-direction: column; gap: 8px; z-index: 103;
+        }
+        .zoom-btns button {
+            width: 40px; height: 40px; border-radius: 20px; border: 1px solid #3b82f6;
+            background: rgba(0,0,0,0.85); color: #3b82f6; font-size: 20px;
+            cursor: pointer; backdrop-filter: blur(4px); font-family: monospace;
         }
         .follow-btn {
             position: fixed; bottom: 12px; right: 12px;
@@ -41,11 +36,8 @@
             border-radius: 20px; font-size: 12px; z-index: 103;
             border: 1px solid #3b82f6; cursor: pointer;
             font-family: monospace; backdrop-filter: blur(4px);
-            transition: all 0.2s;
         }
-        .follow-btn.active {
-            background: #3b82f6; color: white;
-        }
+        .follow-btn.active { background: #3b82f6; color: white; }
         .row { display: flex; justify-content: space-between; margin: 3px 0; }
         .badge { display: inline-block; width: 8px; height: 8px; border-radius: 8px; margin-right: 6px; }
         .blue { background: #3b82f6; } .red { background: #ef4444; }
@@ -71,483 +63,143 @@
     <div class="row"><span>Точек:</span><span id="ptCount">0</span></div>
 </div>
 
-<div class="help">👆 Drag • 🤏 Pinch zoom</div>
+<div class="zoom-btns">
+    <button id="zoomIn">+</button>
+    <button id="zoomOut">−</button>
+</div>
 <button class="follow-btn active" id="followBtn">📍 Следить</button>
 
 <script>
 (function(){
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    const followBtn = document.getElementById('followBtn');
     
-    // Camera state
     let view = { lat: 59.9343, lon: 30.3351, zoom: 17 };
-    let dragState = null;
-    let pinchState = null;
-    let followMode = true; // Автоследование
-    let interactionTimeout = null;
-    
-    // Data
-    let historyLine = [];
+    let followMode = true, dragState = null;
     let currentPos = { lat: 59.9343, lon: 30.3351 };
     let predKal = null, predPoly = null;
-    let kalman, historyPoints = [], logData = [];
-    let lastTime = null;
+    let kalman, historyPoints = [], logData = [], lastTime = null;
     const HORIZON = 3.0;
     
-    // Disable auto-follow temporarily
-    function disableFollow() {
-        followMode = false;
-        followBtn.textContent = '📍 Следить';
-        followBtn.classList.remove('active');
-        
-        // Clear existing timeout
-        if (interactionTimeout) clearTimeout(interactionTimeout);
-    }
-    
-    function enableFollow() {
-        followMode = true;
-        followBtn.textContent = '📍 Следить';
-        followBtn.classList.add('active');
-        
-        // Immediately jump to current position
-        if (currentPos) {
-            view.lat = currentPos.lat;
-            view.lon = currentPos.lon;
-            draw();
-        }
-    }
-    
-    // Toggle follow mode on button click
-    followBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (followMode) {
-            disableFollow();
-        } else {
-            enableFollow();
-        }
-    });
-    
     function toScreen(lat, lon) {
-        const scale = Math.pow(2, view.zoom) * 1.5;
-        const x = (lon - view.lon) * scale * Math.cos(view.lat * Math.PI/180) * 111000 + canvas.width/2;
-        const y = (view.lat - lat) * scale * 111000 + canvas.height/2;
-        return { x, y };
-    }
-    
-    function toWorld(sx, sy) {
-        const scale = Math.pow(2, view.zoom) * 1.5;
-        const lon = view.lon + (sx - canvas.width/2) / (scale * Math.cos(view.lat * Math.PI/180) * 111000);
-        const lat = view.lat - (sy - canvas.height/2) / (scale * 111000);
-        return { lat, lon };
+        const s = Math.pow(2, view.zoom) * 1.5 * 111000;
+        return {
+            x: (lon - view.lon) * s * Math.cos(view.lat * Math.PI/180) + canvas.width/2,
+            y: (view.lat - lat) * s + canvas.height/2
+        };
     }
     
     class Kalman2D {
         constructor() {
-            this.x = [0, 0, 0, 0, 0, 0];
-            this.P = [1,1,0.5,0.5,0.2,0.2];
-            this.Q = [0.01,0.01,0.5,0.5,0.3,0.3];
-            this.R = 1.0;
-            this.initialized = false;
+            this.x = [0,0,0,0,0,0]; this.P = [1,1,0.5,0.5,0.2,0.2];
+            this.Q = [0.01,0.01,0.5,0.5,0.3,0.3]; this.R = 1.0; this.ok = false;
         }
-        
         predict(dt) {
-            if (!this.initialized || dt <= 0) return;
-            const dt2 = dt*dt/2;
-            this.x[0] += this.x[2]*dt + this.x[4]*dt2;
-            this.x[1] += this.x[3]*dt + this.x[5]*dt2;
-            this.x[2] += this.x[4]*dt;
-            this.x[3] += this.x[5]*dt;
-            for (let i=0; i<6; i++) this.P[i] += this.Q[i]*dt;
+            if(!this.ok||dt<=0)return;
+            const d2=dt*dt/2;
+            this.x[0]+=this.x[2]*dt+this.x[4]*d2; this.x[1]+=this.x[3]*dt+this.x[5]*d2;
+            this.x[2]+=this.x[4]*dt; this.x[3]+=this.x[5]*dt;
+            for(let i=0;i<6;i++)this.P[i]+=this.Q[i]*dt;
         }
-        
-        update(lat, lon, dt, speed=null, heading=null) {
-            if (!this.initialized) {
-                this.x[0] = lat; this.x[1] = lon;
-                if (speed && heading) {
-                    this.x[2] = speed*Math.cos(heading)/111111;
-                    this.x[3] = speed*Math.sin(heading)/(111111*Math.cos(lat*Math.PI/180));
-                }
-                this.initialized = true;
-                return;
+        update(lat,lon,dt,spd,hdg) {
+            if(!this.ok){this.x[0]=lat;this.x[1]=lon;if(spd&&hdg){this.x[2]=spd*Math.cos(hdg)/111111;this.x[3]=spd*Math.sin(hdg)/(111111*Math.cos(lat*Math.PI/180));}this.ok=true;return;}
+            if(spd&&hdg&&dt>0.1){
+                let vx=spd*Math.cos(hdg)/111111,vy=spd*Math.sin(hdg)/(111111*Math.cos(this.x[0]*Math.PI/180));
+                let k=this.P[2]/(this.P[2]+0.5);this.x[2]+=k*(vx-this.x[2]);this.P[2]*=1-k;
+                k=this.P[3]/(this.P[3]+0.5);this.x[3]+=k*(vy-this.x[3]);this.P[3]*=1-k;
+                if(dt>0.5){this.x[4]=0.8*this.x[4]+0.2*(vx-this.x[2])/dt;this.x[5]=0.8*this.x[5]+0.2*(vy-this.x[3])/dt;}
             }
-            
-            if (speed && heading && dt > 0.1) {
-                const vx = speed*Math.cos(heading)/111111;
-                const vy = speed*Math.sin(heading)/(111111*Math.cos(this.x[0]*Math.PI/180));
-                const K2 = this.P[2]/(this.P[2]+0.5);
-                this.x[2] += K2*(vx-this.x[2]);
-                this.P[2] *= (1-K2);
-                const K3 = this.P[3]/(this.P[3]+0.5);
-                this.x[3] += K3*(vy-this.x[3]);
-                this.P[3] *= (1-K3);
-                if (dt > 0.5) {
-                    this.x[4] = 0.8*this.x[4] + 0.2*(vx-this.x[2])/dt;
-                    this.x[5] = 0.8*this.x[5] + 0.2*(vy-this.x[3])/dt;
-                }
-            }
-            
-            const K0 = this.P[0]/(this.P[0]+this.R);
-            this.x[0] += K0*(lat-this.x[0]);
-            this.P[0] *= (1-K0);
-            
-            const K1 = this.P[1]/(this.P[1]+this.R);
-            this.x[1] += K1*(lon-this.x[1]);
-            this.P[1] *= (1-K1);
+            let k0=this.P[0]/(this.P[0]+this.R);this.x[0]+=k0*(lat-this.x[0]);this.P[0]*=1-k0;
+            let k1=this.P[1]/(this.P[1]+this.R);this.x[1]+=k1*(lon-this.x[1]);this.P[1]*=1-k1;
         }
-        
-        extrapolate(sec) {
-            const dt2 = sec*sec/2;
-            return {
-                lat: this.x[0] + this.x[2]*sec + this.x[4]*dt2,
-                lon: this.x[1] + this.x[3]*sec + this.x[5]*dt2
-            };
-        }
-        
-        get() { return { lat: this.x[0], lon: this.x[1] }; }
+        extrapolate(s){let d2=s*s/2;return{lat:this.x[0]+this.x[2]*s+this.x[4]*d2,lon:this.x[1]+this.x[3]*s+this.x[5]*d2};}
+        get(){return{lat:this.x[0],lon:this.x[1]};}
     }
     
-    function cramer2D(points, targetT) {
-        if (points.length < 2) return points.length ? points[0].coord : 0;
-        if (points.length === 2) {
-            const slope = (points[1].coord-points[0].coord)/(points[1].t-points[0].t);
-            return points[1].coord + slope*targetT;
-        }
-        
-        let s0=points.length, s1=0, s2=0, s3=0, s4=0;
-        let sy=0, syt=0, syt2=0;
-        
-        for (const p of points) {
-            const t=p.t, t2=t*t, t3=t2*t, t4=t3*t;
-            s1+=t; s2+=t2; s3+=t3; s4+=t4;
-            const y=p.coord;
-            sy+=y; syt+=y*t; syt2+=y*t2;
-        }
-        
-        function det3(a,b,c,d,e,f,g,h,i) {
-            return a*(e*i-f*h) - b*(d*i-f*g) + c*(d*h-e*g);
-        }
-        
-        const D = det3(s4,s3,s2, s3,s2,s1, s2,s1,s0);
-        if (Math.abs(D) < 1e-10) {
-            const last=points[points.length-1], first=points[0];
-            return last.coord + (last.coord-first.coord)/(last.t-first.t)*targetT;
-        }
-        
-        const a = det3(syt2,s3,s2, syt,s2,s1, sy,s1,s0)/D;
-        const b = det3(s4,syt2,s2, s3,syt,s1, s2,sy,s0)/D;
-        const c = det3(s4,s3,syt2, s3,s2,syt, s2,s1,sy)/D;
-        
-        return a*targetT*targetT + b*targetT + c;
+    function cramer2D(pts, t) {
+        if(pts.length<2)return pts.length?pts[0].coord:0;
+        if(pts.length===2){let s=(pts[1].coord-pts[0].coord)/(pts[1].t-pts[0].t);return pts[1].coord+s*t;}
+        let s0=pts.length,s1=0,s2=0,s3=0,s4=0,sy=0,syt=0,syt2=0;
+        for(let p of pts){let t2=p.t*p.t;let t3=t2*p.t;let t4=t3*p.t;s1+=p.t;s2+=t2;s3+=t3;s4+=t4;let y=p.coord;sy+=y;syt+=y*p.t;syt2+=y*t2;}
+        let det=(a,b,c,d,e,f,g,h,i)=>a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);
+        let D=det(s4,s3,s2,s3,s2,s1,s2,s1,s0);
+        if(Math.abs(D)<1e-10){let l=pts[pts.length-1],f=pts[0];return l.coord+(l.coord-f.coord)/(l.t-f.t)*t;}
+        let a=det(syt2,s3,s2,syt,s2,s1,sy,s1,s0)/D;
+        let b=det(s4,syt2,s2,s3,syt,s1,s2,sy,s0)/D;
+        let c=det(s4,s3,syt2,s3,s2,syt,s2,s1,sy)/D;
+        return a*t*t+b*t+c;
     }
     
-    function polyExtrapolate(history, now, horizon=3) {
-        if (history.length < 2) return null;
-        const recent = history.slice(-12);
-        const latPts=[], lonPts=[];
-        for (const p of recent) {
-            const dt = p.time - now;
-            latPts.push({t:dt, coord:p.lat});
-            lonPts.push({t:dt, coord:p.lon});
-        }
-        return {
-            lat: cramer2D(latPts, horizon),
-            lon: cramer2D(lonPts, horizon)
-        };
+    function polyExtrapolate(h, now, hz=3) {
+        if(h.length<2)return null;
+        let r=h.slice(-12),lp=[],lo=[];
+        for(let p of r){let dt=p.time-now;lp.push({t:dt,coord:p.lat});lo.push({t:dt,coord:p.lon});}
+        return{lat:cramer2D(lp,hz),lon:cramer2D(lo,hz)};
     }
     
-    function dist(lat1,lon1,lat2,lon2) {
-        const R=6371000;
-        const dLat=(lat2-lat1)*Math.PI/180;
-        const dLon=(lon2-lon1)*Math.PI/180;
-        const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-        return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-    }
+    function dist(l1,o1,l2,o2){let R=6371000,a=(l2-l1)*Math.PI/180,b=(o2-o1)*Math.PI/180;let c=Math.sin(a/2)**2+Math.cos(l1*Math.PI/180)*Math.cos(l2*Math.PI/180)*Math.sin(b/2)**2;return R*2*Math.atan2(Math.sqrt(c),Math.sqrt(1-c));}
     
     function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.strokeStyle="#1e293b";ctx.lineWidth=0.5;
+        let gs=0.0005*Math.pow(2,15-view.zoom);
+        for(let lo=Math.floor(view.lon/gs)*gs;lo<view.lon+0.01;lo+=gs){let a=toScreen(view.lat-0.02,lo),b=toScreen(view.lat+0.02,lo);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+        for(let la=Math.floor(view.lat/gs)*gs;la<view.lat+0.01;la+=gs){let a=toScreen(la,view.lon-0.02),b=toScreen(la,view.lon+0.02);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
         
-        // Grid
-        ctx.strokeStyle = "#1e293b";
-        ctx.lineWidth = 0.5;
-        const gridSize = 0.0005 * Math.pow(2, 15-view.zoom);
-        for (let lon = Math.floor(view.lon/gridSize)*gridSize; lon < view.lon+0.01; lon+=gridSize) {
-            const p1 = toScreen(view.lat-0.02, lon);
-            const p2 = toScreen(view.lat+0.02, lon);
-            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-        }
-        for (let lat = Math.floor(view.lat/gridSize)*gridSize; lat < view.lat+0.01; lat+=gridSize) {
-            const p1 = toScreen(lat, view.lon-0.02);
-            const p2 = toScreen(lat, view.lon+0.02);
-            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-        }
-        
-        // History line
-        if (historyLine.length > 1) {
-            ctx.beginPath();
-            ctx.strokeStyle = "#3b82f6";
-            ctx.lineWidth = 2.5;
-            const first = toScreen(historyLine[0][0], historyLine[0][1]);
-            ctx.moveTo(first.x, first.y);
-            for (let i=1; i<historyLine.length; i++) {
-                const p = toScreen(historyLine[i][0], historyLine[i][1]);
-                ctx.lineTo(p.x, p.y);
-            }
-            ctx.stroke();
-        }
-        
-        // Predictions
-        if (currentPos && predKal) {
-            ctx.beginPath(); ctx.setLineDash([6,6]);
-            ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2;
-            const from = toScreen(currentPos.lat, currentPos.lon);
-            const to = toScreen(predKal.lat, predKal.lon);
-            ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
-        }
-        if (currentPos && predPoly) {
-            ctx.beginPath(); ctx.setLineDash([4,8]);
-            ctx.strokeStyle = "#f87171"; ctx.lineWidth = 2;
-            const from = toScreen(currentPos.lat, currentPos.lon);
-            const to = toScreen(predPoly.lat, predPoly.lon);
-            ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
-        }
+        if(historyPoints.length>1){ctx.beginPath();ctx.strokeStyle="#3b82f6";ctx.lineWidth=2.5;let f=toScreen(historyPoints[0].lat,historyPoints[0].lon);ctx.moveTo(f.x,f.y);for(let i=1;i<historyPoints.length;i++){let p=toScreen(historyPoints[i].lat,historyPoints[i].lon);ctx.lineTo(p.x,p.y);}ctx.stroke();}
+        if(currentPos&&predKal){ctx.beginPath();ctx.setLineDash([6,6]);ctx.strokeStyle="#60a5fa";ctx.lineWidth=2;let f=toScreen(currentPos.lat,currentPos.lon),t=toScreen(predKal.lat,predKal.lon);ctx.moveTo(f.x,f.y);ctx.lineTo(t.x,t.y);ctx.stroke();}
+        if(currentPos&&predPoly){ctx.beginPath();ctx.setLineDash([4,8]);ctx.strokeStyle="#f87171";ctx.lineWidth=2;let f=toScreen(currentPos.lat,currentPos.lon),t=toScreen(predPoly.lat,predPoly.lon);ctx.moveTo(f.x,f.y);ctx.lineTo(t.x,t.y);ctx.stroke();}
         ctx.setLineDash([]);
-        
-        // Points
-        if (currentPos) {
-            const p = toScreen(currentPos.lat, currentPos.lon);
-            ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, 2*Math.PI);
-            ctx.fillStyle = "#3b82f6"; ctx.fill();
-            ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, 2*Math.PI);
-            ctx.fillStyle = "white"; ctx.fill();
-        }
-        if (predKal) {
-            const p = toScreen(predKal.lat, predKal.lon);
-            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 2*Math.PI);
-            ctx.fillStyle = "rgba(59,130,246,0.6)"; ctx.fill();
-        }
-        if (predPoly) {
-            const p = toScreen(predPoly.lat, predPoly.lon);
-            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 2*Math.PI);
-            ctx.fillStyle = "rgba(239,68,68,0.6)"; ctx.fill();
-        }
+        if(currentPos){let p=toScreen(currentPos.lat,currentPos.lon);ctx.beginPath();ctx.arc(p.x,p.y,7,0,6.28);ctx.fillStyle="#3b82f6";ctx.fill();ctx.beginPath();ctx.arc(p.x,p.y,3,0,6.28);ctx.fillStyle="white";ctx.fill();}
+        if(predKal){let p=toScreen(predKal.lat,predKal.lon);ctx.beginPath();ctx.arc(p.x,p.y,6,0,6.28);ctx.fillStyle="rgba(59,130,246,0.6)";ctx.fill();}
+        if(predPoly){let p=toScreen(predPoly.lat,predPoly.lon);ctx.beginPath();ctx.arc(p.x,p.y,6,0,6.28);ctx.fillStyle="rgba(239,68,68,0.6)";ctx.fill();}
     }
     
-    function getEventPos(e) {
-        if (e.touches) {
-            if (e.touches.length === 1) {
-                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-            } else if (e.touches.length === 2) {
-                return {
-                    x1: e.touches[0].clientX, y1: e.touches[0].clientY,
-                    x2: e.touches[1].clientX, y2: e.touches[1].clientY,
-                    dist: Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
-                                    e.touches[0].clientY-e.touches[1].clientY)
-                };
-            }
-            return null;
-        }
-        return { x: e.clientX, y: e.clientY };
-    }
+    // Zoom buttons
+    document.getElementById('zoomIn').onclick = () => { view.zoom = Math.min(20, view.zoom+0.5); draw(); };
+    document.getElementById('zoomOut').onclick = () => { view.zoom = Math.max(12, view.zoom-0.5); draw(); };
     
-    function handleDragStart(pos) {
-        disableFollow();
-        dragState = { x: pos.x, y: pos.y, lat: view.lat, lon: view.lon };
-    }
+    // Follow button
+    let fb = document.getElementById('followBtn');
+    fb.onclick = () => { followMode = !followMode; fb.classList.toggle('active', followMode); if(followMode&&currentPos){view.lat=currentPos.lat;view.lon=currentPos.lon;draw();} };
     
-    function handleDragMove(pos) {
-        if (!dragState) return;
-        const scale = Math.pow(2, view.zoom) * 1.5;
-        const dx = (pos.x - dragState.x) / (scale * 111000);
-        const dy = (pos.y - dragState.y) / (scale * 111000);
-        view.lat = dragState.lat + dy;
-        view.lon = dragState.lon - dx / Math.cos(view.lat * Math.PI/180);
-        draw();
-    }
+    // Drag
+    canvas.onpointerdown = e => { dragState = {x:e.clientX, y:e.clientY, lat:view.lat, lon:view.lon}; followMode=false; fb.classList.remove('active'); };
+    canvas.onpointermove = e => { if(!dragState)return; let s=Math.pow(2,view.zoom)*1.5*111000; view.lat=dragState.lat+(dragState.y-e.clientY)/s; view.lon=dragState.lon-(dragState.x-e.clientX)/(s*Math.cos(view.lat*Math.PI/180)); draw(); };
+    canvas.onpointerup = () => { dragState = null; };
     
-    function handlePinchStart(pos) {
-        disableFollow();
-        pinchState = {
-            dist: pos.dist,
-            lat: view.lat, lon: view.lon, zoom: view.zoom,
-            midX: (pos.x1 + pos.x2) / 2,
-            midY: (pos.y1 + pos.y2) / 2
-        };
-    }
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; draw(); }
+    window.onresize = resize;
+    resize();
     
-    function handlePinchMove(pos) {
-        if (!pinchState) return;
-        const scale = pos.dist / pinchState.dist;
-        const newZoom = pinchState.zoom + Math.log2(scale);
-        view.zoom = Math.max(12, Math.min(20, newZoom));
-        
-        const worldBefore = toWorld(pinchState.midX, pinchState.midY);
-        const worldAfter = toWorld(pinchState.midX, pinchState.midY);
-        view.lat += worldBefore.lat - worldAfter.lat;
-        view.lon += worldBefore.lon - worldAfter.lon;
-        draw();
-    }
-    
-    // Mouse events
-    canvas.addEventListener('mousedown', (e) => {
-        const pos = getEventPos(e);
-        if (pos) handleDragStart(pos);
-        e.preventDefault();
-    });
-    
-    canvas.addEventListener('mousemove', (e) => {
-        const pos = getEventPos(e);
-        if (pos) handleDragMove(pos);
-    });
-    
-    canvas.addEventListener('mouseup', () => { dragState = null; });
-    canvas.addEventListener('mouseleave', () => { dragState = null; });
-    
-    canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        disableFollow();
-        const worldBefore = toWorld(e.clientX, e.clientY);
-        view.zoom = Math.max(12, Math.min(20, view.zoom + (e.deltaY > 0 ? -0.5 : 0.5)));
-        const worldAfter = toWorld(e.clientX, e.clientY);
-        view.lat += worldBefore.lat - worldAfter.lat;
-        view.lon += worldBefore.lon - worldAfter.lon;
-        draw();
-    }, { passive: false });
-    
-    // Touch events
-    canvas.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        const pos = getEventPos(e);
-        if (!pos) return;
-        
-        if (e.touches.length === 2) {
-            dragState = null;
-            handlePinchStart(pos);
-        } else if (e.touches.length === 1) {
-            pinchState = null;
-            handleDragStart(pos);
-        }
-    }, { passive: false });
-    
-    canvas.addEventListener('touchmove', (e) => {
-        e.preventDefault();
-        const pos = getEventPos(e);
-        if (!pos) return;
-        
-        if (e.touches.length === 2 && pinchState) {
-            handlePinchMove(pos);
-        } else if (e.touches.length === 1 && dragState) {
-            handleDragMove(pos);
-        }
-    }, { passive: false });
-    
-    canvas.addEventListener('touchend', (e) => {
-        if (e.touches.length === 0) {
-            dragState = null;
-            pinchState = null;
-        } else if (e.touches.length === 1) {
-            pinchState = null;
-            const pos = getEventPos(e);
-            if (pos) handleDragStart(pos);
-        }
-    });
-    
-    canvas.addEventListener('touchcancel', () => {
-        dragState = null;
-        pinchState = null;
-    });
-    
-    window.addEventListener('resize', () => {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        draw();
-    });
-    
-    // Initialize
     kalman = new Kalman2D();
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
     
     function onPosition(pos) {
-        const {latitude, longitude, speed, heading, accuracy} = pos.coords;
-        const now = pos.timestamp/1000;
-        const spd = (speed!=null) ? speed : null;
-        const hdg = (heading!=null && spd>0.2) ? heading*Math.PI/180 : null;
+        let {latitude:la,longitude:lo,speed:sp,heading:hd,accuracy:ac} = pos.coords;
+        let now = pos.timestamp/1000, spd = sp||null, hdg = (hd&&spd>0.2)?hd*Math.PI/180:null;
         
-        if (!lastTime) {
-            lastTime = now;
-            kalman.update(latitude, longitude, 0.1, spd, hdg);
-            currentPos = kalman.get();
-            historyPoints.push({lat:currentPos.lat, lon:currentPos.lon, time:now});
-            if (followMode) {
-                view.lat = currentPos.lat;
-                view.lon = currentPos.lon;
-            }
-            draw();
-            return;
-        }
+        if(!lastTime){lastTime=now;kalman.update(la,lo,0.1,spd,hdg);currentPos=kalman.get();historyPoints.push({lat:currentPos.lat,lon:currentPos.lon,time:now});if(followMode){view.lat=currentPos.lat;view.lon=currentPos.lon;}draw();return;}
+        let dt=now-lastTime;if(dt<=0.01)return;lastTime=now;
+        kalman.predict(dt);kalman.update(la,lo,dt,spd,hdg);currentPos=kalman.get();
+        historyPoints.push({lat:currentPos.lat,lon:currentPos.lon,time:now});if(historyPoints.length>50)historyPoints.shift();
+        predKal=kalman.extrapolate(HORIZON);predPoly=historyPoints.length>=3?polyExtrapolate(historyPoints,now,HORIZON):null;
         
-        const dt = now - lastTime;
-        if (dt <= 0.01) return;
-        lastTime = now;
-        
-        kalman.predict(dt);
-        kalman.update(latitude, longitude, dt, spd, hdg);
-        currentPos = kalman.get();
-        
-        historyPoints.push({lat:currentPos.lat, lon:currentPos.lon, time:now});
-        if (historyPoints.length > 50) historyPoints.shift();
-        historyLine = historyPoints.map(p => [p.lat, p.lon]);
-        
-        predKal = kalman.extrapolate(HORIZON);
-        predPoly = (historyPoints.length >= 3) ? polyExtrapolate(historyPoints, now, HORIZON) : null;
-        
-        let errK=null, errP=null;
-        const targetT = now - HORIZON;
-        for (let i=logData.length-1; i>=0; i--) {
-            const e = logData[i];
-            const eTime = new Date(e.time).getTime()/1000;
-            if (Math.abs(eTime-targetT) < 0.5 && e.kalLat !== null) {
-                errK = dist(latitude, longitude, e.kalLat, e.kalLon);
-                if (e.polLat !== null) errP = dist(latitude, longitude, e.polLat, e.polLon);
-                break;
-            }
-        }
-        
-        document.getElementById('errKal').textContent = errK ? errK.toFixed(1)+' m' : '-- m';
-        document.getElementById('errPoly').textContent = (errP && predPoly) ? errP.toFixed(1)+' m' : '-- m';
-        if (predKal && predPoly) {
-            document.getElementById('diffPred').textContent = dist(predKal.lat,predKal.lon,predPoly.lat,predPoly.lon).toFixed(1)+' m';
-        }
-        
-        document.getElementById('coord').textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
-        document.getElementById('speedVal').textContent = spd ? (spd*3.6).toFixed(1)+' km/h' : '--';
-        document.getElementById('accVal').textContent = accuracy ? accuracy.toFixed(1)+' m' : '--';
-        document.getElementById('ptCount').textContent = historyPoints.length;
-        
-        // Only auto-follow when followMode is true
-        if (followMode) {
-            view.lat = currentPos.lat;
-            view.lon = currentPos.lon;
-        }
-        
+        let errK=null,errP=null,tt=now-HORIZON;
+        for(let i=logData.length-1;i>=0;i--){let e=logData[i];if(Math.abs(new Date(e.time).getTime()/1000-tt)<0.5&&e.kalLat!=null){errK=dist(la,lo,e.kalLat,e.kalLon);if(e.polLat!=null)errP=dist(la,lo,e.polLat,e.polLon);break;}}
+        document.getElementById('errKal').textContent=errK?errK.toFixed(1)+' m':'-- m';
+        document.getElementById('errPoly').textContent=errP&&predPoly?errP.toFixed(1)+' m':'-- m';
+        if(predKal&&predPoly)document.getElementById('diffPred').textContent=dist(predKal.lat,predKal.lon,predPoly.lat,predPoly.lon).toFixed(1)+' m';
+        document.getElementById('coord').textContent=`${la.toFixed(6)}, ${lo.toFixed(6)}`;
+        document.getElementById('speedVal').textContent=spd?(spd*3.6).toFixed(1)+' km/h':'--';
+        document.getElementById('accVal').textContent=ac?ac.toFixed(1)+' m':'--';
+        document.getElementById('ptCount').textContent=historyPoints.length;
+        if(followMode){view.lat=currentPos.lat;view.lon=currentPos.lon;}
         draw();
-        
-        logData.push({
-            time: new Date(now*1000).toISOString(),
-            kalLat: predKal.lat, kalLon: predKal.lon,
-            polLat: predPoly?.lat ?? null, polLon: predPoly?.lon ?? null
-        });
-        if (logData.length > 200) logData.shift();
+        logData.push({time:new Date(now*1000).toISOString(),kalLat:predKal.lat,kalLon:predKal.lon,polLat:predPoly?.lat??null,polLon:predPoly?.lon??null});
+        if(logData.length>200)logData.shift();
     }
     
-    if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(onPosition, 
-            () => document.getElementById('coord').textContent = 'GPS error',
-            { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
-    }
-    
-    draw();
+    if(navigator.geolocation)navigator.geolocation.watchPosition(onPosition,()=>document.getElementById('coord').textContent='GPS error',{enableHighAccuracy:true,timeout:8000,maximumAge:0});
 })();
 </script>
 </body>
