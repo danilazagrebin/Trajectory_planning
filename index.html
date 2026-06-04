@@ -225,22 +225,15 @@
         }
 
         // Прогноз Калмана на 3 секунды вперёд
-        function predictKalman(dt = 3) {
-            if (!kalmanState) return null;
-            return {
-                lat: kalmanState.lat + kalmanState.vLat * dt,
-                lon: kalmanState.lon + kalmanState.vLon * dt
-            };
-        }
-
         // Полиномиальная экстраполяция второй степени (метод Крамера)
         function polyExtrapolate(points, futureTime) {
             if (points.length < 3) {
                 // Если мало точек, используем линейную экстраполяцию
                 if (points.length === 2) {
                     const dt = points[1].t - points[0].t;
-                    const vLat = (points[1].lat - points[0].lat) / Math.max(dt, 0.1);
-                    const vLon = (points[1].lon - points[0].lon) / Math.max(dt, 0.1);
+                    if (dt < 0.001) return { lat: points[1].lat, lon: points[1].lon };
+                    const vLat = (points[1].lat - points[0].lat) / dt;
+                    const vLon = (points[1].lon - points[0].lon) / dt;
                     return {
                         lat: points[1].lat + vLat * futureTime,
                         lon: points[1].lon + vLon * futureTime
@@ -248,27 +241,28 @@
                 }
                 return points.length > 0 ? { lat: points[0].lat, lon: points[0].lon } : null;
             }
-
+        
             // Берём последние 3 точки
             const pts = points.slice(-3);
             const t0 = pts[0].t;
             const t1 = pts[1].t;
             const t2 = pts[2].t;
-
+        
             // Нормализуем время относительно t0
             const x0 = 0;
             const x1 = t1 - t0;
             const x2 = t2 - t0;
-            const xFuture = (t2 - t0) + futureTime;
-
+            // Будущее время: от последней точки (t2) + futureTime, в нормализованных координатах
+            const xFuture = x2 + futureTime;
+        
             // Решаем систему для lat: y = a + b*x + c*x^2
             const latPoly = solveQuadraticCramer(x0, x1, x2,
                 pts[0].lat, pts[1].lat, pts[2].lat);
             const lonPoly = solveQuadraticCramer(x0, x1, x2,
                 pts[0].lon, pts[1].lon, pts[2].lon);
-
+        
             if (!latPoly || !lonPoly) return null;
-
+        
             return {
                 lat: latPoly.a + latPoly.b * xFuture + latPoly.c * xFuture * xFuture,
                 lon: lonPoly.a + lonPoly.b * xFuture + lonPoly.c * xFuture * xFuture
