@@ -35,6 +35,17 @@
             border-radius: 8px; font-size: 10px; z-index: 102;
             pointer-events: none;
         }
+        .follow-btn {
+            position: fixed; bottom: 12px; right: 12px;
+            background: rgba(0,0,0,0.85); color: #3b82f6; padding: 8px 16px;
+            border-radius: 20px; font-size: 12px; z-index: 103;
+            border: 1px solid #3b82f6; cursor: pointer;
+            font-family: monospace; backdrop-filter: blur(4px);
+            transition: all 0.2s;
+        }
+        .follow-btn.active {
+            background: #3b82f6; color: white;
+        }
         .row { display: flex; justify-content: space-between; margin: 3px 0; }
         .badge { display: inline-block; width: 8px; height: 8px; border-radius: 8px; margin-right: 6px; }
         .blue { background: #3b82f6; } .red { background: #ef4444; }
@@ -61,16 +72,20 @@
 </div>
 
 <div class="help">👆 Drag • 🤏 Pinch zoom</div>
+<button class="follow-btn active" id="followBtn">📍 Следить</button>
 
 <script>
 (function(){
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
+    const followBtn = document.getElementById('followBtn');
     
     // Camera state
     let view = { lat: 59.9343, lon: 30.3351, zoom: 17 };
     let dragState = null;
     let pinchState = null;
+    let followMode = true; // Автоследование
+    let interactionTimeout = null;
     
     // Data
     let historyLine = [];
@@ -80,7 +95,39 @@
     let lastTime = null;
     const HORIZON = 3.0;
     
-    // Coordinate transformation
+    // Disable auto-follow temporarily
+    function disableFollow() {
+        followMode = false;
+        followBtn.textContent = '📍 Следить';
+        followBtn.classList.remove('active');
+        
+        // Clear existing timeout
+        if (interactionTimeout) clearTimeout(interactionTimeout);
+    }
+    
+    function enableFollow() {
+        followMode = true;
+        followBtn.textContent = '📍 Следить';
+        followBtn.classList.add('active');
+        
+        // Immediately jump to current position
+        if (currentPos) {
+            view.lat = currentPos.lat;
+            view.lon = currentPos.lon;
+            draw();
+        }
+    }
+    
+    // Toggle follow mode on button click
+    followBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (followMode) {
+            disableFollow();
+        } else {
+            enableFollow();
+        }
+    });
+    
     function toScreen(lat, lon) {
         const scale = Math.pow(2, view.zoom) * 1.5;
         const x = (lon - view.lon) * scale * Math.cos(view.lat * Math.PI/180) * 111000 + canvas.width/2;
@@ -95,7 +142,6 @@
         return { lat, lon };
     }
     
-    // Improved Kalman with acceleration estimation
     class Kalman2D {
         constructor() {
             this.x = [0, 0, 0, 0, 0, 0];
@@ -161,7 +207,6 @@
         get() { return { lat: this.x[0], lon: this.x[1] }; }
     }
     
-    // Polynomial using Cramer's rule
     function cramer2D(points, targetT) {
         if (points.length < 2) return points.length ? points[0].coord : 0;
         if (points.length === 2) {
@@ -288,7 +333,6 @@
         }
     }
     
-    // Unified event handling for both mouse and touch
     function getEventPos(e) {
         if (e.touches) {
             if (e.touches.length === 1) {
@@ -307,6 +351,7 @@
     }
     
     function handleDragStart(pos) {
+        disableFollow();
         dragState = { x: pos.x, y: pos.y, lat: view.lat, lon: view.lon };
     }
     
@@ -321,6 +366,7 @@
     }
     
     function handlePinchStart(pos) {
+        disableFollow();
         pinchState = {
             dist: pos.dist,
             lat: view.lat, lon: view.lon, zoom: view.zoom,
@@ -335,7 +381,6 @@
         const newZoom = pinchState.zoom + Math.log2(scale);
         view.zoom = Math.max(12, Math.min(20, newZoom));
         
-        // Zoom towards pinch center
         const worldBefore = toWorld(pinchState.midX, pinchState.midY);
         const worldAfter = toWorld(pinchState.midX, pinchState.midY);
         view.lat += worldBefore.lat - worldAfter.lat;
@@ -360,6 +405,7 @@
     
     canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
+        disableFollow();
         const worldBefore = toWorld(e.clientX, e.clientY);
         view.zoom = Math.max(12, Math.min(20, view.zoom + (e.deltaY > 0 ? -0.5 : 0.5)));
         const worldAfter = toWorld(e.clientX, e.clientY);
@@ -375,10 +421,10 @@
         if (!pos) return;
         
         if (e.touches.length === 2) {
-            dragState = null; // Cancel drag
+            dragState = null;
             handlePinchStart(pos);
         } else if (e.touches.length === 1) {
-            pinchState = null; // Cancel pinch
+            pinchState = null;
             handleDragStart(pos);
         }
     }, { passive: false });
@@ -433,8 +479,10 @@
             kalman.update(latitude, longitude, 0.1, spd, hdg);
             currentPos = kalman.get();
             historyPoints.push({lat:currentPos.lat, lon:currentPos.lon, time:now});
-            view.lat = currentPos.lat;
-            view.lon = currentPos.lon;
+            if (followMode) {
+                view.lat = currentPos.lat;
+                view.lon = currentPos.lon;
+            }
             draw();
             return;
         }
@@ -451,11 +499,9 @@
         if (historyPoints.length > 50) historyPoints.shift();
         historyLine = historyPoints.map(p => [p.lat, p.lon]);
         
-        // Predictions
         predKal = kalman.extrapolate(HORIZON);
         predPoly = (historyPoints.length >= 3) ? polyExtrapolate(historyPoints, now, HORIZON) : null;
         
-        // Error lookback
         let errK=null, errP=null;
         const targetT = now - HORIZON;
         for (let i=logData.length-1; i>=0; i--) {
@@ -479,8 +525,8 @@
         document.getElementById('accVal').textContent = accuracy ? accuracy.toFixed(1)+' m' : '--';
         document.getElementById('ptCount').textContent = historyPoints.length;
         
-        // Auto-follow only if not manually interacting
-        if (!dragState && !pinchState) {
+        // Only auto-follow when followMode is true
+        if (followMode) {
             view.lat = currentPos.lat;
             view.lon = currentPos.lon;
         }
