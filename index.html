@@ -18,95 +18,46 @@
             height: 100vh;
             display: flex;
             flex-direction: column;
-            overflow: hidden;
         }
         
         #map {
             flex: 1;
             width: 100%;
-            min-height: 0;
+            min-height: 300px;
         }
         
-        .controls {
-            padding: 12px 10px;
+        .panel {
             background: #f8f9fa;
             border-top: 2px solid #dee2e6;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            align-items: center;
+            padding: 10px;
         }
         
-        button {
-            padding: 12px 16px;
-            border: none;
-            border-radius: 10px;
-            font-size: 15px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            flex: 1;
-            min-width: 80px;
-            white-space: nowrap;
-        }
-        
-        .start-btn {
-            background: #28a745;
-            color: white;
-        }
-        
-        .stop-btn {
-            background: #dc3545;
-            color: white;
-        }
-        
-        .download-btn {
-            background: #007bff;
-            color: white;
-        }
-        
-        .reset-btn {
-            background: #6c757d;
-            color: white;
-        }
-        
-        button:active {
-            transform: scale(0.95);
-            opacity: 0.85;
-        }
-        
-        button:disabled {
-            background: #adb5bd;
-            color: #fff;
-            cursor: not-allowed;
-            opacity: 0.7;
-            transform: none;
-        }
-        
-        .info-panel {
-            padding: 8px 15px;
-            background: #fff;
-            font-size: 13px;
+        .status-bar {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #dee2e6;
+            padding: 10px 12px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 14px;
             flex-wrap: wrap;
-            gap: 5px;
+            gap: 8px;
         }
         
-        .status-indicator {
+        .indicator {
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
         }
         
         .dot {
-            width: 10px;
-            height: 10px;
+            width: 12px;
+            height: 12px;
             border-radius: 50%;
             background: #dc3545;
             display: inline-block;
+            flex-shrink: 0;
         }
         
         .dot.active {
@@ -115,44 +66,93 @@
         }
         
         @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.3; transform: scale(1.2); }
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .buttons-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 14px 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex: 1;
+            min-width: 70px;
+            color: white;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .btn-start {
+            background: #28a745;
+        }
+        
+        .btn-stop {
+            background: #dc3545;
+        }
+        
+        .btn-download {
+            background: #007bff;
+        }
+        
+        .btn-reset {
+            background: #6c757d;
+        }
+        
+        button:active {
+            transform: scale(0.95);
+            opacity: 0.8;
+        }
+        
+        button:disabled {
+            background: #adb5bd !important;
+            color: #ddd;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
         }
         
         .stats {
-            font-size: 12px;
-            color: #666;
+            font-size: 13px;
+            color: #495057;
             text-align: center;
-            padding: 4px;
+            padding: 6px;
             background: #e9ecef;
             border-radius: 6px;
-        }
-        
-        .legend {
-            background: white;
-            padding: 8px 10px;
-            border-radius: 8px;
-            font-size: 12px;
-            line-height: 1.8;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            margin-top: 8px;
         }
     </style>
 </head>
 <body>
-    <div class="info-panel">
-        <span class="status-indicator">
-            <span class="dot" id="indicator"></span>
-            <span id="statusText">Готов к запуску</span>
-        </span>
-        <span id="pointCount">Точек: 0</span>
-        <span class="stats" id="stats"></span>
-    </div>
     <div id="map"></div>
-    <div class="controls">
-        <button class="start-btn" id="startBtn" onclick="startTracking()">▶ Старт</button>
-        <button class="stop-btn" id="stopBtn" onclick="stopTracking()" disabled>⏹ Стоп</button>
-        <button class="download-btn" id="downloadBtn" onclick="downloadCSV()" disabled>📥 CSV</button>
-        <button class="reset-btn" id="resetBtn" onclick="resetData()">🔄 Сброс</button>
+    <div class="panel">
+        <div class="status-bar">
+            <span class="indicator">
+                <span class="dot" id="indicator"></span>
+                <strong id="statusText">Готов к запуску</strong>
+            </span>
+            <span id="pointCount">Точек: 0</span>
+        </div>
+        
+        <div class="buttons-row">
+            <button class="btn-start" id="startBtn" onclick="startTracking()">▶ СТАРТ</button>
+            <button class="btn-stop" id="stopBtn" onclick="stopTracking()" disabled>⏹ СТОП</button>
+        </div>
+        
+        <div class="buttons-row" style="margin-top: 8px;">
+            <button class="btn-download" id="downloadBtn" onclick="downloadCSV()" disabled>📥 СКАЧАТЬ CSV</button>
+            <button class="btn-reset" id="resetBtn" onclick="resetData()">🔄 СБРОС</button>
+        </div>
+        
+        <div class="stats" id="stats">Ожидание данных...</div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -167,11 +167,9 @@
         let watchId = null;
         let dataPoints = [];
         
-        // Параметры фильтра Калмана
-        const KALMAN_R = 15; // Ковариация измерений (точность GPS ~15м)
-        const KALMAN_Q = 2;  // Ковариация процесса (динамика движения)
+        const KALMAN_R = 15;
+        const KALMAN_Q = 2;
         
-        // Состояние фильтра Калмана
         let kalmanState = {
             lat: 0, lon: 0,
             vLat: 0, vLon: 0,
@@ -191,48 +189,50 @@
                 maxZoom: 19
             }).addTo(map);
 
-            // Слой трека
             pathLine = L.polyline([], {
                 color: '#3388ff',
-                weight: 4,
+                weight: 5,
                 opacity: 0.7
             }).addTo(map);
 
-            // Маркер текущего положения (синий)
             currentMarker = L.circleMarker([0, 0], {
-                radius: 8,
+                radius: 10,
                 fillColor: '#3388ff',
                 color: '#ffffff',
                 weight: 3,
                 fillOpacity: 0.9
             }).addTo(map);
 
-            // Маркер прогноза Калмана (зелёный)
             kalmanMarker = L.circleMarker([0, 0], {
-                radius: 8,
+                radius: 10,
                 fillColor: '#28a745',
                 color: '#ffffff',
                 weight: 3,
                 fillOpacity: 0.8
             }).addTo(map);
 
-            // Маркер полиномиального прогноза (оранжевый)
             polyMarker = L.circleMarker([0, 0], {
-                radius: 8,
+                radius: 10,
                 fillColor: '#ff8c00',
                 color: '#ffffff',
                 weight: 3,
                 fillOpacity: 0.8
             }).addTo(map);
 
-            // Добавляем легенду
+            // Легенда
             const legend = L.control({ position: 'bottomright' });
             legend.onAdd = function() {
-                const div = L.DomUtil.create('div', 'legend');
+                const div = L.DomUtil.create('div', '');
+                div.style.background = 'white';
+                div.style.padding = '10px';
+                div.style.borderRadius = '8px';
+                div.style.fontSize = '13px';
+                div.style.lineHeight = '1.8';
+                div.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)';
                 div.innerHTML = `
                     <div>🔵 Текущая позиция</div>
                     <div>🟢 Прогноз Калмана (3с)</div>
-                    <div>🟠 Полиномиальный прогноз (3с)</div>
+                    <div>🟠 Полином. прогноз (3с)</div>
                     <div style="color:#3388ff">━━ Трек движения</div>
                 `;
                 return div;
@@ -265,36 +265,27 @@
                 return { lat: measuredLat, lon: measuredLon };
             }
 
-            // Ограничиваем dt для стабильности
             const dtClamped = Math.min(Math.max(dt, 0.05), 5.0);
 
-            // Шаг предсказания
             const predLat = kalmanState.lat + kalmanState.vLat * dtClamped;
             const predLon = kalmanState.lon + kalmanState.vLon * dtClamped;
 
-            // Ковариация предсказания
             const pLatLat_pred = kalmanState.pLatLat + KALMAN_Q * dtClamped;
             const pLonLon_pred = kalmanState.pLonLon + KALMAN_Q * dtClamped;
-            const pLatLon_pred = kalmanState.pLatLon;
-            const pLonLat_pred = kalmanState.pLonLat;
 
-            // Калмановское усиление (раздельно для lat и lon)
             const S_lat = pLatLat_pred + KALMAN_R;
             const S_lon = pLonLon_pred + KALMAN_R;
             const K_lat = pLatLat_pred / S_lat;
             const K_lon = pLonLon_pred / S_lon;
 
-            // Инновации (ошибка измерения)
             const innovLat = measuredLat - predLat;
             const innovLon = measuredLon - predLon;
 
-            // Обновление состояния
             kalmanState.lat = predLat + K_lat * innovLat;
             kalmanState.lon = predLon + K_lon * innovLon;
             kalmanState.vLat += (K_lat * innovLat) / dtClamped;
             kalmanState.vLon += (K_lon * innovLon) / dtClamped;
 
-            // Обновление ковариации
             kalmanState.pLatLat = (1 - K_lat) * pLatLat_pred;
             kalmanState.pLonLon = (1 - K_lon) * pLonLon_pred;
 
@@ -328,34 +319,27 @@
                 };
             }
 
-            // Берём последние 3 точки
             const pts = points.slice(-3);
             const t0 = pts[0].t;
             const t1 = pts[1].t;
             const t2 = pts[2].t;
 
-            // Проверяем, что времена разные
             const dt1 = t1 - t0;
             const dt2 = t2 - t0;
 
             if (Math.abs(dt2) < 0.001) {
-                // Все точки в один момент — возвращаем последнюю
                 return { lat: pts[2].lat, lon: pts[2].lon };
             }
 
-            // Нормализованные времена
             const x0 = 0;
             const x1 = dt1;
             const x2 = dt2;
-            // Будущее время: от последней точки + futureTime
             const xFuture = x2 + futureTime;
 
-            // Решаем систему для lat и lon
             const latCoeffs = solveQuadraticCramer(x0, x1, x2, pts[0].lat, pts[1].lat, pts[2].lat);
             const lonCoeffs = solveQuadraticCramer(x0, x1, x2, pts[0].lon, pts[1].lon, pts[2].lon);
 
             if (!latCoeffs || !lonCoeffs) {
-                // fallback: линейная экстраполяция по последним 2 точкам
                 const lastTwo = points.slice(-2);
                 const dt_last = lastTwo[1].t - lastTwo[0].t;
                 if (Math.abs(dt_last) < 0.001) {
@@ -369,17 +353,13 @@
                 };
             }
 
-            // Вычисляем прогноз
             const predLat = latCoeffs.a + latCoeffs.b * xFuture + latCoeffs.c * xFuture * xFuture;
             const predLon = lonCoeffs.a + lonCoeffs.b * xFuture + lonCoeffs.c * xFuture * xFuture;
 
             return { lat: predLat, lon: predLon };
         }
 
-        // Решение системы уравнений методом Крамера
         function solveQuadraticCramer(x0, x1, x2, y0, y1, y2) {
-            // Система: a + b*xi + c*xi^2 = yi
-            // Составляем нормальную систему МНК (хотя для 3 точек это точное решение)
             const n = 3;
             const Sx = x0 + x1 + x2;
             const Sx2 = x0*x0 + x1*x1 + x2*x2;
@@ -389,16 +369,12 @@
             const Sxy = x0*y0 + x1*y1 + x2*y2;
             const Sx2y = x0*x0*y0 + x1*x1*y1 + x2*x2*y2;
 
-            // Матрица системы
             const det = n * (Sx2 * Sx4 - Sx3 * Sx3) 
                       - Sx * (Sx * Sx4 - Sx2 * Sx3) 
                       + Sx2 * (Sx * Sx3 - Sx2 * Sx2);
 
-            if (Math.abs(det) < 1e-12) {
-                return null; // Система вырождена
-            }
+            if (Math.abs(det) < 1e-12) return null;
 
-            // Определители для a, b, c
             const detA = Sy * (Sx2 * Sx4 - Sx3 * Sx3) 
                        - Sx * (Sxy * Sx4 - Sx2y * Sx3) 
                        + Sx2 * (Sxy * Sx3 - Sx2y * Sx2);
@@ -421,7 +397,7 @@
         // ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
         function calculateSpeed(lat1, lon1, lat2, lon2, dt) {
             if (dt < 0.001) return 0;
-            const R = 6371000; // радиус Земли в метрах
+            const R = 6371000;
             const dLat = (lat2 - lat1) * Math.PI / 180;
             const dLon = (lon2 - lon1) * Math.PI / 180;
             const a = Math.sin(dLat / 2) ** 2 +
@@ -429,11 +405,11 @@
                      Math.sin(dLon / 2) ** 2;
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
             const distance = R * c;
-            return (distance / dt) * 3.6; // км/ч
+            return (distance / dt) * 3.6;
         }
 
         function getCurrentTimestamp() {
-            return performance.now() / 1000; // секунды с высокой точностью
+            return performance.now() / 1000;
         }
 
         // ============ ОБРАБОТКА ДАННЫХ GPS ============
@@ -443,7 +419,6 @@
             const lon = position.coords.longitude;
             const accuracy = position.coords.accuracy;
 
-            // Вычисляем скорость
             let speed = 0;
             if (dataPoints.length > 0) {
                 const prev = dataPoints[dataPoints.length - 1];
@@ -451,34 +426,23 @@
                 speed = calculateSpeed(prev.lat, prev.lon, lat, lon, dt);
             }
 
-            // Создаём объект с временной меткой для внутренних вычислений
-            const pointWithTime = {
-                t: now,
-                lat: lat,
-                lon: lon
-            };
-
-            // Временный массив для экстраполяции (включая текущую точку)
+            const pointWithTime = { t: now, lat, lon };
             const pointsForPrediction = dataPoints.map(p => ({ t: p._time, lat: p.lat, lon: p.lon }));
             pointsForPrediction.push(pointWithTime);
 
-            // Обновляем фильтр Калмана
             let dt_kalman = 1.0;
             if (dataPoints.length > 0) {
                 dt_kalman = now - dataPoints[dataPoints.length - 1]._time;
             }
             updateKalman(lat, lon, dt_kalman);
 
-            // Прогнозы на 3 секунды вперёд
             const kalmanPred = predictKalman(3.0);
             const polyPred = polyExtrapolate(pointsForPrediction, 3.0);
 
-            // Сохраняем точку данных
             const dataPoint = {
                 timestamp: now.toFixed(3),
-                _time: now, // внутреннее время для вычислений
-                lat: lat,
-                lon: lon,
+                _time: now,
+                lat, lon,
                 speed_kmh: speed.toFixed(2),
                 accuracy_m: accuracy.toFixed(1),
                 kalman_lat: kalmanPred ? kalmanPred.lat.toFixed(8) : '',
@@ -488,62 +452,39 @@
             };
 
             dataPoints.push(dataPoint);
-
-            // Обновляем отображение на карте
             updateMapDisplay(lat, lon, kalmanPred, polyPred);
             updateUI();
-
-            // Отладочный вывод
-            console.log(`Точка: [${lat.toFixed(6)}, ${lon.toFixed(6)}] | ` +
-                       `Калман: [${kalmanPred ? kalmanPred.lat.toFixed(6) : 'нет'}, ${kalmanPred ? kalmanPred.lon.toFixed(6) : 'нет'}] | ` +
-                       `Полином: [${polyPred ? polyPred.lat.toFixed(6) : 'нет'}, ${polyPred ? polyPred.lon.toFixed(6) : 'нет'}]`);
         }
 
         function updateMapDisplay(lat, lon, kalmanPred, polyPred) {
-            // Текущая позиция
             currentMarker.setLatLng([lat, lon]);
-
-            // Трек
-            const latlngs = dataPoints.map(p => [p.lat, p.lon]);
-            pathLine.setLatLngs(latlngs);
-
-            // Прогноз Калмана
-            if (kalmanPred) {
-                kalmanMarker.setLatLng([kalmanPred.lat, kalmanPred.lon]);
-            }
-
-            // Полиномиальный прогноз
-            if (polyPred) {
-                polyMarker.setLatLng([polyPred.lat, polyPred.lon]);
-            }
-
-            // Следуем за пользователем
+            pathLine.setLatLngs(dataPoints.map(p => [p.lat, p.lon]));
+            if (kalmanPred) kalmanMarker.setLatLng([kalmanPred.lat, kalmanPred.lon]);
+            if (polyPred) polyMarker.setLatLng([polyPred.lat, polyPred.lon]);
             map.setView([lat, lon], map.getZoom());
         }
 
         function updateUI() {
             document.getElementById('pointCount').textContent = `Точек: ${dataPoints.length}`;
             document.getElementById('downloadBtn').disabled = dataPoints.length === 0;
-
             if (dataPoints.length > 0) {
                 const last = dataPoints[dataPoints.length - 1];
                 document.getElementById('stats').textContent = 
-                    `⚡${last.speed_kmh} км/ч | 🎯${last.accuracy_m}м`;
+                    `⚡ ${last.speed_kmh} км/ч | 🎯 ${last.accuracy_m}м`;
             }
         }
 
         function handleError(error) {
-            console.error('Ошибка геолокации:', error);
             let message = 'Ошибка геолокации';
             switch(error.code) {
                 case error.PERMISSION_DENIED:
-                    message = '❌ Доступ к геолокации запрещён';
+                    message = '❌ Доступ запрещён';
                     break;
                 case error.POSITION_UNAVAILABLE:
                     message = '⚠️ Позиция недоступна';
                     break;
                 case error.TIMEOUT:
-                    message = '⏱ Таймаут запроса';
+                    message = '⏱ Таймаут';
                     break;
             }
             document.getElementById('statusText').textContent = message;
@@ -552,14 +493,14 @@
         // ============ УПРАВЛЕНИЕ ТРЕКИНГОМ ============
         function startTracking() {
             if (!navigator.geolocation) {
-                alert('Геолокация не поддерживается вашим браузером');
+                alert('Геолокация не поддерживается');
                 return;
             }
 
             trackingActive = true;
             document.getElementById('startBtn').disabled = true;
             document.getElementById('stopBtn').disabled = false;
-            document.getElementById('statusText').textContent = '📍 Отслеживание активно';
+            document.getElementById('statusText').textContent = '📍 Отслеживание...';
             document.getElementById('indicator').classList.add('active');
 
             watchId = navigator.geolocation.watchPosition(
@@ -581,7 +522,7 @@
             }
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
-            document.getElementById('statusText').textContent = '⏸ Отслеживание остановлено';
+            document.getElementById('statusText').textContent = '⏸ Остановлено';
             document.getElementById('indicator').classList.remove('active');
         }
 
@@ -589,23 +530,20 @@
             stopTracking();
             dataPoints = [];
             resetKalman();
-            
-            // Очищаем карту
             pathLine.setLatLngs([]);
             currentMarker.setLatLng([0, 0]);
             kalmanMarker.setLatLng([0, 0]);
             polyMarker.setLatLng([0, 0]);
-            
             updateUI();
             document.getElementById('statusText').textContent = '🔄 Данные сброшены';
-            document.getElementById('stats').textContent = '';
+            document.getElementById('stats').textContent = 'Ожидание данных...';
             document.getElementById('downloadBtn').disabled = true;
         }
 
         // ============ СКАЧИВАНИЕ CSV ============
         function downloadCSV() {
             if (dataPoints.length === 0) {
-                alert('Нет данных для скачивания');
+                alert('Нет данных');
                 return;
             }
 
@@ -634,7 +572,6 @@
             const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             const url = URL.createObjectURL(blob);
-
             const now = new Date();
             const filename = `gps_track_${now.toISOString().slice(0, 19).replace(/:/g, '-')}.csv`;
 
@@ -645,14 +582,15 @@
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
-
-            console.log(`CSV сохранён: ${filename}, точек: ${dataPoints.length}`);
         }
 
         // ============ ЗАПУСК ============
         window.addEventListener('load', () => {
             initMap();
-            console.log('GPS Трекер готов. Нажмите "Старт" для начала отслеживания.');
+            // Убедимся, что кнопка Старт активна
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            console.log('GPS Трекер готов. Нажмите "СТАРТ" для начала.');
         });
     </script>
 </body>
