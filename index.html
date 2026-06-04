@@ -2,205 +2,554 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-    <title>GNSS Tracker: Kalman vs Polynomial</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>GPS Трекер с прогнозированием</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { 
-            font-family: monospace; background: #0a0f1e; overflow: hidden;
-            touch-action: none; -webkit-user-select: none; user-select: none;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; display: block; }
-        .panel {
-            position: fixed; bottom: 12px; left: 12px; right: 12px; max-width: 300px;
-            background: rgba(0,0,0,0.85); border-radius: 12px; padding: 10px 14px;
-            font-size: 11px; z-index: 100; color: #e2e8f0; border-left: 3px solid #3b82f6;
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
-        .compare {
-            position: fixed; top: 12px; left: 12px;
-            background: rgba(20, 30, 45, 0.95); border-radius: 12px; padding: 8px 14px;
-            font-size: 10px; z-index: 101; border-left: 3px solid #f97316; color: #f1f5f9;
+        
+        #map {
+            flex: 1;
+            width: 100%;
+            min-height: 300px;
         }
-        .zoom-btns {
-            position: fixed; right: 12px; top: 50%; transform: translateY(-50%);
-            display: flex; flex-direction: column; gap: 8px; z-index: 103;
+        
+        .controls {
+            background: #16213e;
+            padding: 12px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.3);
         }
-        .zoom-btns button {
-            width: 40px; height: 40px; border-radius: 20px; border: 1px solid #3b82f6;
-            background: rgba(0,0,0,0.85); color: #3b82f6; font-size: 20px;
-            cursor: pointer; backdrop-filter: blur(4px); font-family: monospace;
+        
+        button {
+            background: #0f3460;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 25px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            flex: 1;
+            min-width: 100px;
+            max-width: 200px;
         }
-        .follow-btn {
-            position: fixed; bottom: 12px; right: 12px;
-            background: rgba(0,0,0,0.85); color: #3b82f6; padding: 8px 16px;
-            border-radius: 20px; font-size: 12px; z-index: 103;
-            border: 1px solid #3b82f6; cursor: pointer;
-            font-family: monospace; backdrop-filter: blur(4px);
+        
+        button:active {
+            transform: scale(0.95);
+            background: #1a5276;
         }
-        .follow-btn.active { background: #3b82f6; color: white; }
-        .row { display: flex; justify-content: space-between; margin: 3px 0; }
-        .badge { display: inline-block; width: 8px; height: 8px; border-radius: 8px; margin-right: 6px; }
-        .blue { background: #3b82f6; } .red { background: #ef4444; }
-        hr { margin: 6px 0; border-color: #475569; }
+        
+        button.primary {
+            background: #e94560;
+            font-weight: bold;
+        }
+        
+        button.download {
+            background: #2ecc71;
+            color: #1a1a2e;
+            font-weight: bold;
+        }
+        
+        .status {
+            width: 100%;
+            text-align: center;
+            font-size: 12px;
+            padding: 5px;
+            color: #aaa;
+        }
+        
+        .legend {
+            display: flex;
+            gap: 12px;
+            font-size: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 100%;
+            padding: 5px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .dot.blue { background: #3498db; }
+        .dot.red { background: #e74c3c; }
+        .dot.green { background: #2ecc71; }
     </style>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 </head>
 <body>
-
-<canvas id="canvas"></canvas>
-
-<div class="compare">
-    <div><b>Экстраполяция +3s</b></div>
-    <div class="row"><span><span class="badge blue"></span>Калман</span><span id="errKal">-- m</span></div>
-    <div class="row"><span><span class="badge red"></span>Полином</span><span id="errPoly">-- m</span></div>
-    <hr>
-    <div class="row"><span>Разница:</span><span id="diffPred">-- m</span></div>
-</div>
-
-<div class="panel">
-    <div><b id="coord">Waiting GPS...</b></div>
-    <div class="row"><span>Скорость:</span><span id="speedVal">-- km/h</span></div>
-    <div class="row"><span>Точность GPS:</span><span id="accVal">-- m</span></div>
-    <div class="row"><span>Точек:</span><span id="ptCount">0</span></div>
-</div>
-
-<div class="zoom-btns">
-    <button id="zoomIn">+</button>
-    <button id="zoomOut">−</button>
-</div>
-<button class="follow-btn active" id="followBtn">📍 Следить</button>
-
-<script>
-(function(){
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+    <div id="map"></div>
     
-    let view = { lat: 59.9343, lon: 30.3351, zoom: 17 };
-    let followMode = true, dragState = null;
-    let currentPos = { lat: 59.9343, lon: 30.3351 };
-    let predKal = null, predPoly = null;
-    let kalman, historyPoints = [], logData = [], lastTime = null;
-    const HORIZON = 3.0;
+    <div class="legend">
+        <div class="legend-item"><span class="dot blue"></span> Пройденный путь</div>
+        <div class="legend-item"><span class="dot red"></span> Прогноз (полином)</div>
+        <div class="legend-item"><span class="dot green"></span> Прогноз (Калман)</div>
+    </div>
     
-    function toScreen(lat, lon) {
-        const s = Math.pow(2, view.zoom) * 1.5 * 111000;
-        return {
-            x: (lon - view.lon) * s * Math.cos(view.lat * Math.PI/180) + canvas.width/2,
-            y: (view.lat - lat) * s + canvas.height/2
-        };
-    }
+    <div class="status" id="status">Нажмите "Старт" для начала записи</div>
     
-    class Kalman2D {
-        constructor() {
-            this.x = [0,0,0,0,0,0]; this.P = [1,1,0.5,0.5,0.2,0.2];
-            this.Q = [0.01,0.01,0.5,0.5,0.3,0.3]; this.R = 1.0; this.ok = false;
-        }
-        predict(dt) {
-            if(!this.ok||dt<=0)return;
-            const d2=dt*dt/2;
-            this.x[0]+=this.x[2]*dt+this.x[4]*d2; this.x[1]+=this.x[3]*dt+this.x[5]*d2;
-            this.x[2]+=this.x[4]*dt; this.x[3]+=this.x[5]*dt;
-            for(let i=0;i<6;i++)this.P[i]+=this.Q[i]*dt;
-        }
-        update(lat,lon,dt,spd,hdg) {
-            if(!this.ok){this.x[0]=lat;this.x[1]=lon;if(spd&&hdg){this.x[2]=spd*Math.cos(hdg)/111111;this.x[3]=spd*Math.sin(hdg)/(111111*Math.cos(lat*Math.PI/180));}this.ok=true;return;}
-            if(spd&&hdg&&dt>0.1){
-                let vx=spd*Math.cos(hdg)/111111,vy=spd*Math.sin(hdg)/(111111*Math.cos(this.x[0]*Math.PI/180));
-                let k=this.P[2]/(this.P[2]+0.5);this.x[2]+=k*(vx-this.x[2]);this.P[2]*=1-k;
-                k=this.P[3]/(this.P[3]+0.5);this.x[3]+=k*(vy-this.x[3]);this.P[3]*=1-k;
-                if(dt>0.5){this.x[4]=0.8*this.x[4]+0.2*(vx-this.x[2])/dt;this.x[5]=0.8*this.x[5]+0.2*(vy-this.x[3])/dt;}
+    <div class="controls">
+        <button id="startBtn" class="primary">▶ Старт</button>
+        <button id="stopBtn" disabled>⏹ Стоп</button>
+        <button id="predictBtn" disabled>🔮 Прогноз</button>
+        <button id="downloadBtn" class="download">📥 Скачать CSV</button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // ============ Глобальные переменные ============
+        let map;
+        let pathLine;
+        let markerCurrent;
+        let markerPredictPoly;
+        let markerPredictKalman;
+        
+        // Массив точек маршрута: {lat, lng, timestamp}
+        let routePoints = [];
+        
+        // Флаги состояния
+        let isRecording = false;
+        let hasPrediction = false;
+        
+        // ID таймера GPS
+        let gpsWatchId = null;
+        
+        // Параметры фильтра Калмана
+        let kalmanState = null;
+        const KALMAN_Q = 0.01; // шум процесса
+        const KALMAN_R = 0.1;  // шум измерений
+        
+        // ============ Инициализация карты ============
+        function initMap(lat, lng) {
+            if (map) {
+                map.remove();
             }
-            let k0=this.P[0]/(this.P[0]+this.R);this.x[0]+=k0*(lat-this.x[0]);this.P[0]*=1-k0;
-            let k1=this.P[1]/(this.P[1]+this.R);this.x[1]+=k1*(lon-this.x[1]);this.P[1]*=1-k1;
+            
+            map = L.map('map', {
+                zoomControl: true,
+                attributionControl: false
+            }).setView([lat, lng], 18);
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19
+            }).addTo(map);
+            
+            // Инициализируем слои
+            pathLine = L.polyline([], {
+                color: '#3498db',
+                weight: 4,
+                opacity: 0.8
+            }).addTo(map);
+            
+            markerCurrent = L.circleMarker([lat, lng], {
+                radius: 8,
+                color: '#fff',
+                fillColor: '#3498db',
+                fillOpacity: 1,
+                weight: 3
+            }).addTo(map);
+            
+            markerPredictPoly = L.marker([lat, lng], {
+                opacity: 0,
+                icon: L.divIcon({
+                    className: '',
+                    html: '<div style="background:#e74c3c;width:12px;height:12px;border-radius:50%;border:2px solid white;box-shadow:0 0 8px #e74c3c;"></div>',
+                    iconSize: [12, 12],
+                    iconAnchor: [6, 6]
+                })
+            }).addTo(map);
+            
+            markerPredictKalman = L.marker([lat, lng], {
+                opacity: 0,
+                icon: L.divIcon({
+                    className: '',
+                    html: '<div style="background:#2ecc71;width:12px;height:12px;border-radius:50%;border:2px solid white;box-shadow:0 0 8px #2ecc71;"></div>',
+                    iconSize: [12, 12],
+                    iconAnchor: [6, 6]
+                })
+            }).addTo(map);
         }
-        extrapolate(s){let d2=s*s/2;return{lat:this.x[0]+this.x[2]*s+this.x[4]*d2,lon:this.x[1]+this.x[3]*s+this.x[5]*d2};}
-        get(){return{lat:this.x[0],lon:this.x[1]};}
-    }
-    
-    function cramer2D(pts, t) {
-        if(pts.length<2)return pts.length?pts[0].coord:0;
-        if(pts.length===2){let s=(pts[1].coord-pts[0].coord)/(pts[1].t-pts[0].t);return pts[1].coord+s*t;}
-        let s0=pts.length,s1=0,s2=0,s3=0,s4=0,sy=0,syt=0,syt2=0;
-        for(let p of pts){let t2=p.t*p.t;let t3=t2*p.t;let t4=t3*p.t;s1+=p.t;s2+=t2;s3+=t3;s4+=t4;let y=p.coord;sy+=y;syt+=y*p.t;syt2+=y*t2;}
-        let det=(a,b,c,d,e,f,g,h,i)=>a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);
-        let D=det(s4,s3,s2,s3,s2,s1,s2,s1,s0);
-        if(Math.abs(D)<1e-10){let l=pts[pts.length-1],f=pts[0];return l.coord+(l.coord-f.coord)/(l.t-f.t)*t;}
-        let a=det(syt2,s3,s2,syt,s2,s1,sy,s1,s0)/D;
-        let b=det(s4,syt2,s2,s3,syt,s1,s2,sy,s0)/D;
-        let c=det(s4,s3,syt2,s3,s2,syt,s2,s1,sy)/D;
-        return a*t*t+b*t+c;
-    }
-    
-    function polyExtrapolate(h, now, hz=3) {
-        if(h.length<2)return null;
-        let r=h.slice(-12),lp=[],lo=[];
-        for(let p of r){let dt=p.time-now;lp.push({t:dt,coord:p.lat});lo.push({t:dt,coord:p.lon});}
-        return{lat:cramer2D(lp,hz),lon:cramer2D(lo,hz)};
-    }
-    
-    function dist(l1,o1,l2,o2){let R=6371000,a=(l2-l1)*Math.PI/180,b=(o2-o1)*Math.PI/180;let c=Math.sin(a/2)**2+Math.cos(l1*Math.PI/180)*Math.cos(l2*Math.PI/180)*Math.sin(b/2)**2;return R*2*Math.atan2(Math.sqrt(c),Math.sqrt(1-c));}
-    
-    function draw() {
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        ctx.strokeStyle="#1e293b";ctx.lineWidth=0.5;
-        let gs=0.0005*Math.pow(2,15-view.zoom);
-        for(let lo=Math.floor(view.lon/gs)*gs;lo<view.lon+0.01;lo+=gs){let a=toScreen(view.lat-0.02,lo),b=toScreen(view.lat+0.02,lo);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
-        for(let la=Math.floor(view.lat/gs)*gs;la<view.lat+0.01;la+=gs){let a=toScreen(la,view.lon-0.02),b=toScreen(la,view.lon+0.02);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
         
-        if(historyPoints.length>1){ctx.beginPath();ctx.strokeStyle="#3b82f6";ctx.lineWidth=2.5;let f=toScreen(historyPoints[0].lat,historyPoints[0].lon);ctx.moveTo(f.x,f.y);for(let i=1;i<historyPoints.length;i++){let p=toScreen(historyPoints[i].lat,historyPoints[i].lon);ctx.lineTo(p.x,p.y);}ctx.stroke();}
-        if(currentPos&&predKal){ctx.beginPath();ctx.setLineDash([6,6]);ctx.strokeStyle="#60a5fa";ctx.lineWidth=2;let f=toScreen(currentPos.lat,currentPos.lon),t=toScreen(predKal.lat,predKal.lon);ctx.moveTo(f.x,f.y);ctx.lineTo(t.x,t.y);ctx.stroke();}
-        if(currentPos&&predPoly){ctx.beginPath();ctx.setLineDash([4,8]);ctx.strokeStyle="#f87171";ctx.lineWidth=2;let f=toScreen(currentPos.lat,currentPos.lon),t=toScreen(predPoly.lat,predPoly.lon);ctx.moveTo(f.x,f.y);ctx.lineTo(t.x,t.y);ctx.stroke();}
-        ctx.setLineDash([]);
-        if(currentPos){let p=toScreen(currentPos.lat,currentPos.lon);ctx.beginPath();ctx.arc(p.x,p.y,7,0,6.28);ctx.fillStyle="#3b82f6";ctx.fill();ctx.beginPath();ctx.arc(p.x,p.y,3,0,6.28);ctx.fillStyle="white";ctx.fill();}
-        if(predKal){let p=toScreen(predKal.lat,predKal.lon);ctx.beginPath();ctx.arc(p.x,p.y,6,0,6.28);ctx.fillStyle="rgba(59,130,246,0.6)";ctx.fill();}
-        if(predPoly){let p=toScreen(predPoly.lat,predPoly.lon);ctx.beginPath();ctx.arc(p.x,p.y,6,0,6.28);ctx.fillStyle="rgba(239,68,68,0.6)";ctx.fill();}
-    }
-    
-    // Zoom buttons
-    document.getElementById('zoomIn').onclick = () => { view.zoom = Math.min(20, view.zoom+0.5); draw(); };
-    document.getElementById('zoomOut').onclick = () => { view.zoom = Math.max(12, view.zoom-0.5); draw(); };
-    
-    // Follow button
-    let fb = document.getElementById('followBtn');
-    fb.onclick = () => { followMode = !followMode; fb.classList.toggle('active', followMode); if(followMode&&currentPos){view.lat=currentPos.lat;view.lon=currentPos.lon;draw();} };
-    
-    // Drag
-    canvas.onpointerdown = e => { dragState = {x:e.clientX, y:e.clientY, lat:view.lat, lon:view.lon}; followMode=false; fb.classList.remove('active'); };
-    canvas.onpointermove = e => { if(!dragState)return; let s=Math.pow(2,view.zoom)*1.5*111000; view.lat=dragState.lat+(dragState.y-e.clientY)/s; view.lon=dragState.lon-(dragState.x-e.clientX)/(s*Math.cos(view.lat*Math.PI/180)); draw(); };
-    canvas.onpointerup = () => { dragState = null; };
-    
-    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; draw(); }
-    window.onresize = resize;
-    resize();
-    
-    kalman = new Kalman2D();
-    
-    function onPosition(pos) {
-        let {latitude:la,longitude:lo,speed:sp,heading:hd,accuracy:ac} = pos.coords;
-        let now = pos.timestamp/1000, spd = sp||null, hdg = (hd&&spd>0.2)?hd*Math.PI/180:null;
+        // ============ GPS ============
+        function startGPS() {
+            if (!navigator.geolocation) {
+                alert('Геолокация не поддерживается вашим браузером');
+                return;
+            }
+            
+            gpsWatchId = navigator.geolocation.watchPosition(
+                onGPSPosition,
+                onGPSError,
+                {
+                    enableHighAccuracy: true,
+                    timeout: 5000,
+                    maximumAge: 0
+                }
+            );
+        }
         
-        if(!lastTime){lastTime=now;kalman.update(la,lo,0.1,spd,hdg);currentPos=kalman.get();historyPoints.push({lat:currentPos.lat,lon:currentPos.lon,time:now});if(followMode){view.lat=currentPos.lat;view.lon=currentPos.lon;}draw();return;}
-        let dt=now-lastTime;if(dt<=0.01)return;lastTime=now;
-        kalman.predict(dt);kalman.update(la,lo,dt,spd,hdg);currentPos=kalman.get();
-        historyPoints.push({lat:currentPos.lat,lon:currentPos.lon,time:now});if(historyPoints.length>50)historyPoints.shift();
-        predKal=kalman.extrapolate(HORIZON);predPoly=historyPoints.length>=3?polyExtrapolate(historyPoints,now,HORIZON):null;
+        function stopGPS() {
+            if (gpsWatchId !== null) {
+                navigator.geolocation.clearWatch(gpsWatchId);
+                gpsWatchId = null;
+            }
+        }
         
-        let errK=null,errP=null,tt=now-HORIZON;
-        for(let i=logData.length-1;i>=0;i--){let e=logData[i];if(Math.abs(new Date(e.time).getTime()/1000-tt)<0.5&&e.kalLat!=null){errK=dist(la,lo,e.kalLat,e.kalLon);if(e.polLat!=null)errP=dist(la,lo,e.polLat,e.polLon);break;}}
-        document.getElementById('errKal').textContent=errK?errK.toFixed(1)+' m':'-- m';
-        document.getElementById('errPoly').textContent=errP&&predPoly?errP.toFixed(1)+' m':'-- m';
-        if(predKal&&predPoly)document.getElementById('diffPred').textContent=dist(predKal.lat,predKal.lon,predPoly.lat,predPoly.lon).toFixed(1)+' m';
-        document.getElementById('coord').textContent=`${la.toFixed(6)}, ${lo.toFixed(6)}`;
-        document.getElementById('speedVal').textContent=spd?(spd*3.6).toFixed(1)+' km/h':'--';
-        document.getElementById('accVal').textContent=ac?ac.toFixed(1)+' m':'--';
-        document.getElementById('ptCount').textContent=historyPoints.length;
-        if(followMode){view.lat=currentPos.lat;view.lon=currentPos.lon;}
-        draw();
-        logData.push({time:new Date(now*1000).toISOString(),kalLat:predKal.lat,kalLon:predKal.lon,polLat:predPoly?.lat??null,polLon:predPoly?.lon??null});
-        if(logData.length>200)logData.shift();
-    }
-    
-    if(navigator.geolocation)navigator.geolocation.watchPosition(onPosition,()=>document.getElementById('coord').textContent='GPS error',{enableHighAccuracy:true,timeout:8000,maximumAge:0});
-})();
-</script>
+        function onGPSPosition(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const timestamp = Date.now() / 1000; // секунды
+            
+            // Инициализируем фильтр Калмана при первом измерении
+            if (kalmanState === null) {
+                kalmanState = {
+                    lat: lat, lng: lng,
+                    vLat: 0, vLng: 0,
+                    pLat: 1, pLng: 1,
+                    pVLat: 1, pVLng: 1
+                };
+            } else {
+                // Обновляем фильтр Калмана
+                kalmanStep(lat, lng);
+            }
+            
+            // Добавляем точку в маршрут
+            routePoints.push({ lat, lng, timestamp });
+            
+            // Обновляем карту
+            updateMap(lat, lng);
+        }
+        
+        function onGPSError(error) {
+            document.getElementById('status').textContent = 'Ошибка GPS: ' + error.message;
+        }
+        
+        // ============ Фильтр Калмана ============
+        function kalmanStep(measuredLat, measuredLng) {
+            // Предсказание
+            const predLat = kalmanState.lat;
+            const predLng = kalmanState.lng;
+            const predVLat = kalmanState.vLat;
+            const predVLng = kalmanState.vLng;
+            
+            // Ковариация предсказания
+            const predPLat = kalmanState.pLat + KALMAN_Q;
+            const predPLng = kalmanState.pLng + KALMAN_Q;
+            const predPVLat = kalmanState.pVLat + KALMAN_Q;
+            const predPVLng = kalmanState.pVLng + KALMAN_Q;
+            
+            // Калмановское усиление
+            const kgLat = predPLat / (predPLat + KALMAN_R);
+            const kgLng = predPLng / (predPLng + KALMAN_R);
+            
+            // Обновление
+            kalmanState.lat = predLat + kgLat * (measuredLat - predLat);
+            kalmanState.lng = predLng + kgLng * (measuredLng - predLng);
+            kalmanState.vLat = predVLat;
+            kalmanState.vLng = predVLng;
+            
+            // Обновление ковариации
+            kalmanState.pLat = (1 - kgLat) * predPLat;
+            kalmanState.pLng = (1 - kgLng) * predPLng;
+            kalmanState.pVLat = predPVLat;
+            kalmanState.pVLng = predPVLng;
+            
+            // Оценка скорости
+            if (routePoints.length > 1) {
+                const prev = routePoints[routePoints.length - 2];
+                const dt = routePoints[routePoints.length - 1].timestamp - prev.timestamp;
+                if (dt > 0) {
+                    kalmanState.vLat = (measuredLat - prev.lat) / dt;
+                    kalmanState.vLng = (measuredLng - prev.lng) / dt;
+                }
+            }
+        }
+        
+        // Прогноз фильтра Калмана на dt секунд
+        function predictKalman(dt) {
+            if (kalmanState === null) return null;
+            return {
+                lat: kalmanState.lat + kalmanState.vLat * dt,
+                lng: kalmanState.lng + kalmanState.vLng * dt
+            };
+        }
+        
+        // ============ Полиномиальная экстраполяция ============
+        // Решение системы линейных уравнений методом Крамера
+        function solveCramer2(a1, b1, c1, a2, b2, c2) {
+            const det = a1 * b2 - a2 * b1;
+            if (Math.abs(det) < 1e-10) return null;
+            const detX = c1 * b2 - c2 * b1;
+            const detY = a1 * c2 - a2 * c1;
+            return { x: detX / det, y: detY / det };
+        }
+        
+        function solveCramer3(a1, b1, c1, d1, a2, b2, c2, d2, a3, b3, c3, d3) {
+            const det = a1*(b2*c3 - c2*b3) - b1*(a2*c3 - c2*a3) + c1*(a2*b3 - b2*a3);
+            if (Math.abs(det) < 1e-10) return null;
+            
+            const detX = d1*(b2*c3 - c2*b3) - b1*(d2*c3 - c2*d3) + c1*(d2*b3 - b2*d3);
+            const detY = a1*(d2*c3 - c2*d3) - d1*(a2*c3 - c2*a3) + c1*(a2*d3 - d2*a3);
+            const detZ = a1*(b2*d3 - d2*b3) - b1*(a2*d3 - d2*a3) + d1*(a2*b3 - b2*a3);
+            
+            return {
+                x: detX / det,
+                y: detY / det,
+                z: detZ / det
+            };
+        }
+        
+        // Полиномиальная экстраполяция второй степени
+        function predictPolynomial(dt) {
+            const n = routePoints.length;
+            if (n < 3) {
+                // Если недостаточно точек, используем линейную экстраполяцию
+                if (n < 2) return null;
+                const p1 = routePoints[n - 2];
+                const p2 = routePoints[n - 1];
+                const dt2 = p2.timestamp - p1.timestamp;
+                if (dt2 <= 0) return null;
+                const vLat = (p2.lat - p1.lat) / dt2;
+                const vLng = (p2.lng - p1.lng) / dt2;
+                return {
+                    lat: p2.lat + vLat * dt,
+                    lng: p2.lng + vLng * dt
+                };
+            }
+            
+            // Берём последние 3 точки
+            const p3 = routePoints[n - 3];
+            const p2 = routePoints[n - 2];
+            const p1 = routePoints[n - 1];
+            
+            // Центрируем время относительно последней точки
+            const t1 = p1.timestamp - p1.timestamp; // = 0
+            const t2 = p2.timestamp - p1.timestamp;
+            const t3 = p3.timestamp - p1.timestamp;
+            
+            // Строим систему для полинома: lat = a*t^2 + b*t + c
+            // Точка p1 (t=0): c = lat1
+            const cLat = p1.lat;
+            const cLng = p1.lng;
+            
+            // Для p2: a*t2^2 + b*t2 = lat2 - cLat
+            // Для p3: a*t3^2 + b*t3 = lat3 - cLat
+            const solLat = solveCramer2(t2*t2, t2, p2.lat - cLat, t3*t3, t3, p3.lat - cLat);
+            const solLng = solveCramer2(t2*t2, t2, p2.lng - cLng, t3*t3, t3, p3.lng - cLng);
+            
+            if (!solLat || !solLng) return null;
+            
+            const aLat = solLat.x, bLat = solLat.y;
+            const aLng = solLng.x, bLng = solLng.y;
+            
+            // Прогноз на dt вперёд
+            const predLat = aLat * dt * dt + bLat * dt + cLat;
+            const predLng = aLng * dt * dt + bLng * dt + cLng;
+            
+            return { lat: predLat, lng: predLng };
+        }
+        
+        // ============ Обновление карты ============
+        function updateMap(lat, lng) {
+            // Обновляем маркер текущего положения
+            markerCurrent.setLatLng([lat, lng]);
+            
+            // Обновляем линию маршрута
+            const latlngs = routePoints.map(p => [p.lat, p.lng]);
+            pathLine.setLatLngs(latlngs);
+            
+            // Центрируем карту
+            map.setView([lat, lng], map.getZoom());
+            
+            document.getElementById('status').textContent = 
+                `Запись... Точек: ${routePoints.length} | Скорость: ${(kalmanState ? Math.sqrt(kalmanState.vLat**2 + kalmanState.vLng**2)*111000 : 0).toFixed(1)} м/с`;
+        }
+        
+        // ============ Прогнозирование ============
+        function makePrediction() {
+            if (routePoints.length < 2) {
+                alert('Недостаточно точек для прогноза (нужно минимум 2)');
+                return;
+            }
+            
+            const dt = 3; // 3 секунды вперёд
+            
+            // Полиномиальный прогноз
+            const polyPred = predictPolynomial(dt);
+            if (polyPred) {
+                markerPredictPoly.setLatLng([polyPred.lat, polyPred.lng]);
+                markerPredictPoly.setOpacity(1);
+            }
+            
+            // Калмановский прогноз
+            const kalmanPred = predictKalman(dt);
+            if (kalmanPred) {
+                markerPredictKalman.setLatLng([kalmanPred.lat, kalmanPred.lng]);
+                markerPredictKalman.setOpacity(1);
+            }
+            
+            hasPrediction = true;
+            document.getElementById('status').textContent = 
+                `Прогноз на ${dt} сек. построен! (красный - полином, зелёный - Калман)`;
+        }
+        
+        // ============ Скачивание CSV ============
+        function downloadCSV() {
+            if (routePoints.length === 0) {
+                alert('Нет данных для скачивания');
+                return;
+            }
+            
+            let csvContent = 'timestamp,actual_lat,actual_lng';
+            
+            // Добавляем колонки для прогнозов, если они были сделаны
+            if (hasPrediction) {
+                csvContent += ',poly_pred_lat,poly_pred_lng,kalman_pred_lat,kalman_pred_lng';
+            }
+            csvContent += '\n';
+            
+            for (let i = 0; i < routePoints.length; i++) {
+                const p = routePoints[i];
+                let row = `${p.timestamp},${p.lat},${p.lng}`;
+                
+                if (hasPrediction && i === routePoints.length - 1) {
+                    // Для последней точки добавляем прогнозы
+                    const dt = 3;
+                    const polyPred = predictPolynomial(dt);
+                    const kalmanPred = predictKalman(dt);
+                    
+                    if (polyPred) {
+                        row += `,${polyPred.lat},${polyPred.lng}`;
+                    } else {
+                        row += ',0,0';
+                    }
+                    
+                    if (kalmanPred) {
+                        row += `,${kalmanPred.lat},${kalmanPred.lng}`;
+                    } else {
+                        row += ',0,0';
+                    }
+                } else if (hasPrediction) {
+                    row += ',,,,'; // пустые поля прогноза для предыдущих точек
+                }
+                
+                csvContent += row + '\n';
+            }
+            
+            // Добавляем строку с прогнозами на будущее
+            if (hasPrediction && routePoints.length > 0) {
+                const lastPoint = routePoints[routePoints.length - 1];
+                const futureTimestamp = lastPoint.timestamp + 3;
+                const polyPred = predictPolynomial(3);
+                const kalmanPred = predictKalman(3);
+                
+                let futureRow = `${futureTimestamp},,,`; // нет фактических координат
+                if (polyPred) {
+                    futureRow += `${polyPred.lat},${polyPred.lng}`;
+                } else {
+                    futureRow += ',';
+                }
+                if (kalmanPred) {
+                    futureRow += `,${kalmanPred.lat},${kalmanPred.lng}`;
+                } else {
+                    futureRow += ',';
+                }
+                csvContent += futureRow + '\n';
+            }
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `gps_route_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.csv`;
+            link.click();
+            URL.revokeObjectURL(url);
+        }
+        
+        // ============ Обработчики кнопок ============
+        document.getElementById('startBtn').addEventListener('click', () => {
+            routePoints = [];
+            kalmanState = null;
+            hasPrediction = false;
+            isRecording = true;
+            
+            markerPredictPoly.setOpacity(0);
+            markerPredictKalman.setOpacity(0);
+            
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('predictBtn').disabled = false;
+            
+            startGPS();
+            document.getElementById('status').textContent = 'Ожидание GPS-сигнала...';
+        });
+        
+        document.getElementById('stopBtn').addEventListener('click', () => {
+            isRecording = false;
+            stopGPS();
+            
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('predictBtn').disabled = true;
+            
+            document.getElementById('status').textContent = 
+                `Запись остановлена. Всего точек: ${routePoints.length}`;
+        });
+        
+        document.getElementById('predictBtn').addEventListener('click', () => {
+            if (!isRecording && routePoints.length < 2) {
+                alert('Недостаточно данных. Запустите запись и наберите хотя бы 2 точки.');
+                return;
+            }
+            makePrediction();
+        });
+        
+        document.getElementById('downloadBtn').addEventListener('click', downloadCSV);
+        
+        // ============ Первичная инициализация ============
+        // Показываем карту с центром по умолчанию (Москва)
+        initMap(55.7558, 37.6173);
+        
+        // Пытаемся сразу получить местоположение для центрирования
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    initMap(pos.coords.latitude, pos.coords.longitude);
+                },
+                () => {
+                    // Оставляем центр по умолчанию
+                },
+                { timeout: 5000 }
+            );
+        }
+    </script>
 </body>
 </html>
