@@ -2,19 +2,25 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
     <title>GNSS Tracker: Kalman vs Polynomial</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: monospace; background: #0a0f1e; overflow: hidden; }
-        canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; display: block; cursor: grab; }
-        canvas:active { cursor: grabbing; }
+        body { 
+            font-family: monospace; background: #0a0f1e; overflow: hidden;
+            touch-action: none; -webkit-touch-callout: none;
+            -webkit-user-select: none; user-select: none;
+        }
+        canvas { 
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
+            display: block; touch-action: none;
+        }
         
         .panel {
-            position: fixed; bottom: 12px; left: 12px;
+            position: fixed; bottom: 12px; left: 12px; right: 12px; max-width: 300px;
             background: rgba(0,0,0,0.85); border-radius: 12px; padding: 10px 14px;
             font-size: 11px; z-index: 100; color: #e2e8f0; border-left: 3px solid #3b82f6;
-            backdrop-filter: blur(4px); max-width: 280px;
+            backdrop-filter: blur(4px);
         }
         .compare {
             position: fixed; top: 12px; left: 12px;
@@ -27,6 +33,7 @@
             position: fixed; top: 12px; right: 12px;
             background: rgba(0,0,0,0.7); color: #94a3b8; padding: 6px 10px;
             border-radius: 8px; font-size: 10px; z-index: 102;
+            pointer-events: none;
         }
         .row { display: flex; justify-content: space-between; margin: 3px 0; }
         .badge { display: inline-block; width: 8px; height: 8px; border-radius: 8px; margin-right: 6px; }
@@ -53,7 +60,7 @@
     <div class="row"><span>Точек:</span><span id="ptCount">0</span></div>
 </div>
 
-<div class="help">🖱️ Drag • ⚡ Scroll zoom • 📱 Pinch</div>
+<div class="help">👆 Drag • 🤏 Pinch zoom</div>
 
 <script>
 (function(){
@@ -63,7 +70,7 @@
     // Camera state
     let view = { lat: 59.9343, lon: 30.3351, zoom: 17 };
     let dragState = null;
-    let pinchStart = null;
+    let pinchState = null;
     
     // Data
     let historyLine = [];
@@ -91,23 +98,20 @@
     // Improved Kalman with acceleration estimation
     class Kalman2D {
         constructor() {
-            // State: [lat, lon, vLat, vLon, aLat, aLon]
             this.x = [0, 0, 0, 0, 0, 0];
-            this.P = [1,1,0.5,0.5,0.2,0.2]; // Initial covariance
-            this.Q = [0.01,0.01,0.5,0.5,0.3,0.3]; // Process noise
-            this.R = 1.0; // Measurement noise
+            this.P = [1,1,0.5,0.5,0.2,0.2];
+            this.Q = [0.01,0.01,0.5,0.5,0.3,0.3];
+            this.R = 1.0;
             this.initialized = false;
         }
         
         predict(dt) {
             if (!this.initialized || dt <= 0) return;
             const dt2 = dt*dt/2;
-            // State transition with acceleration
             this.x[0] += this.x[2]*dt + this.x[4]*dt2;
             this.x[1] += this.x[3]*dt + this.x[5]*dt2;
             this.x[2] += this.x[4]*dt;
             this.x[3] += this.x[5]*dt;
-            // Covariance prediction
             for (let i=0; i<6; i++) this.P[i] += this.Q[i]*dt;
         }
         
@@ -122,27 +126,21 @@
                 return;
             }
             
-            // Incorporate speed measurement if available
             if (speed && heading && dt > 0.1) {
                 const vx = speed*Math.cos(heading)/111111;
                 const vy = speed*Math.sin(heading)/(111111*Math.cos(this.x[0]*Math.PI/180));
-                // Update velocity with measurement
                 const K2 = this.P[2]/(this.P[2]+0.5);
                 this.x[2] += K2*(vx-this.x[2]);
                 this.P[2] *= (1-K2);
                 const K3 = this.P[3]/(this.P[3]+0.5);
                 this.x[3] += K3*(vy-this.x[3]);
                 this.P[3] *= (1-K3);
-                // Estimate acceleration from velocity change
                 if (dt > 0.5) {
-                    const aLat = (vx-this.x[2])/dt;
-                    const aLon = (vy-this.x[3])/dt;
-                    this.x[4] = 0.8*this.x[4] + 0.2*aLat;
-                    this.x[5] = 0.8*this.x[5] + 0.2*aLon;
+                    this.x[4] = 0.8*this.x[4] + 0.2*(vx-this.x[2])/dt;
+                    this.x[5] = 0.8*this.x[5] + 0.2*(vy-this.x[3])/dt;
                 }
             }
             
-            // Position update
             const K0 = this.P[0]/(this.P[0]+this.R);
             this.x[0] += K0*(lat-this.x[0]);
             this.P[0] *= (1-K0);
@@ -163,7 +161,7 @@
         get() { return { lat: this.x[0], lon: this.x[1] }; }
     }
     
-    // Polynomial using Cramer's rule for 2nd degree
+    // Polynomial using Cramer's rule
     function cramer2D(points, targetT) {
         if (points.length < 2) return points.length ? points[0].coord : 0;
         if (points.length === 2) {
@@ -181,7 +179,6 @@
             sy+=y; syt+=y*t; syt2+=y*t2;
         }
         
-        // Cramer's rule for 3x3 system
         function det3(a,b,c,d,e,f,g,h,i) {
             return a*(e*i-f*h) - b*(d*i-f*g) + c*(d*h-e*g);
         }
@@ -291,29 +288,78 @@
         }
     }
     
-    // Camera controls
-    canvas.addEventListener('mousedown', e => {
-        dragState = { x: e.clientX, y: e.clientY, lat: view.lat, lon: view.lon };
-        e.preventDefault();
-    });
+    // Unified event handling for both mouse and touch
+    function getEventPos(e) {
+        if (e.touches) {
+            if (e.touches.length === 1) {
+                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2) {
+                return {
+                    x1: e.touches[0].clientX, y1: e.touches[0].clientY,
+                    x2: e.touches[1].clientX, y2: e.touches[1].clientY,
+                    dist: Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                                    e.touches[0].clientY-e.touches[1].clientY)
+                };
+            }
+            return null;
+        }
+        return { x: e.clientX, y: e.clientY };
+    }
     
-    canvas.addEventListener('mousemove', e => {
+    function handleDragStart(pos) {
+        dragState = { x: pos.x, y: pos.y, lat: view.lat, lon: view.lon };
+    }
+    
+    function handleDragMove(pos) {
         if (!dragState) return;
         const scale = Math.pow(2, view.zoom) * 1.5;
-        const dx = (e.clientX - dragState.x) / (scale * 111000);
-        const dy = (e.clientY - dragState.y) / (scale * 111000);
+        const dx = (pos.x - dragState.x) / (scale * 111000);
+        const dy = (pos.y - dragState.y) / (scale * 111000);
         view.lat = dragState.lat + dy;
         view.lon = dragState.lon - dx / Math.cos(view.lat * Math.PI/180);
         draw();
+    }
+    
+    function handlePinchStart(pos) {
+        pinchState = {
+            dist: pos.dist,
+            lat: view.lat, lon: view.lon, zoom: view.zoom,
+            midX: (pos.x1 + pos.x2) / 2,
+            midY: (pos.y1 + pos.y2) / 2
+        };
+    }
+    
+    function handlePinchMove(pos) {
+        if (!pinchState) return;
+        const scale = pos.dist / pinchState.dist;
+        const newZoom = pinchState.zoom + Math.log2(scale);
+        view.zoom = Math.max(12, Math.min(20, newZoom));
+        
+        // Zoom towards pinch center
+        const worldBefore = toWorld(pinchState.midX, pinchState.midY);
+        const worldAfter = toWorld(pinchState.midX, pinchState.midY);
+        view.lat += worldBefore.lat - worldAfter.lat;
+        view.lon += worldBefore.lon - worldAfter.lon;
+        draw();
+    }
+    
+    // Mouse events
+    canvas.addEventListener('mousedown', (e) => {
+        const pos = getEventPos(e);
+        if (pos) handleDragStart(pos);
+        e.preventDefault();
+    });
+    
+    canvas.addEventListener('mousemove', (e) => {
+        const pos = getEventPos(e);
+        if (pos) handleDragMove(pos);
     });
     
     canvas.addEventListener('mouseup', () => { dragState = null; });
     canvas.addEventListener('mouseleave', () => { dragState = null; });
     
-    canvas.addEventListener('wheel', e => {
+    canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const factor = e.deltaY > 0 ? 0.9 : 1.1;
-        // Zoom towards cursor
         const worldBefore = toWorld(e.clientX, e.clientY);
         view.zoom = Math.max(12, Math.min(20, view.zoom + (e.deltaY > 0 ? -0.5 : 0.5)));
         const worldAfter = toWorld(e.clientX, e.clientY);
@@ -322,39 +368,48 @@
         draw();
     }, { passive: false });
     
-    // Touch for pinch zoom
-    canvas.addEventListener('touchstart', e => {
+    // Touch events
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const pos = getEventPos(e);
+        if (!pos) return;
+        
         if (e.touches.length === 2) {
-            pinchStart = {
-                dist: Math.hypot(e.touches[0].clientX-e.touches[1].clientX, 
-                                 e.touches[0].clientY-e.touches[1].clientY),
-                lat: view.lat, lon: view.lon, zoom: view.zoom
-            };
+            dragState = null; // Cancel drag
+            handlePinchStart(pos);
         } else if (e.touches.length === 1) {
-            dragState = { x: e.touches[0].clientX, y: e.touches[0].clientY, 
-                         lat: view.lat, lon: view.lon };
+            pinchState = null; // Cancel pinch
+            handleDragStart(pos);
         }
-        e.preventDefault();
     }, { passive: false });
     
-    canvas.addEventListener('touchmove', e => {
-        if (pinchStart && e.touches.length === 2) {
-            const newDist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
-                                       e.touches[0].clientY-e.touches[1].clientY);
-            view.zoom = Math.max(12, Math.min(20, pinchStart.zoom + Math.log2(newDist/pinchStart.dist)));
-            draw();
-        } else if (dragState && e.touches.length === 1) {
-            const scale = Math.pow(2, view.zoom) * 1.5;
-            const dx = (e.touches[0].clientX - dragState.x) / (scale * 111000);
-            const dy = (e.touches[0].clientY - dragState.y) / (scale * 111000);
-            view.lat = dragState.lat + dy;
-            view.lon = dragState.lon - dx / Math.cos(view.lat * Math.PI/180);
-            draw();
-        }
+    canvas.addEventListener('touchmove', (e) => {
         e.preventDefault();
+        const pos = getEventPos(e);
+        if (!pos) return;
+        
+        if (e.touches.length === 2 && pinchState) {
+            handlePinchMove(pos);
+        } else if (e.touches.length === 1 && dragState) {
+            handleDragMove(pos);
+        }
     }, { passive: false });
     
-    canvas.addEventListener('touchend', () => { dragState = null; pinchStart = null; });
+    canvas.addEventListener('touchend', (e) => {
+        if (e.touches.length === 0) {
+            dragState = null;
+            pinchState = null;
+        } else if (e.touches.length === 1) {
+            pinchState = null;
+            const pos = getEventPos(e);
+            if (pos) handleDragStart(pos);
+        }
+    });
+    
+    canvas.addEventListener('touchcancel', () => {
+        dragState = null;
+        pinchState = null;
+    });
     
     window.addEventListener('resize', () => {
         canvas.width = window.innerWidth;
@@ -424,8 +479,8 @@
         document.getElementById('accVal').textContent = accuracy ? accuracy.toFixed(1)+' m' : '--';
         document.getElementById('ptCount').textContent = historyPoints.length;
         
-        // Auto-follow if not dragging
-        if (!dragState && !pinchStart) {
+        // Auto-follow only if not manually interacting
+        if (!dragState && !pinchState) {
             view.lat = currentPos.lat;
             view.lon = currentPos.lon;
         }
