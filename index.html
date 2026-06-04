@@ -3,544 +3,450 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>GNSS Tracker: Kalman vs Polynomial (Enhanced)</title>
+    <title>GNSS Tracker: Kalman vs Polynomial</title>
     <style>
-        * { box-sizing: border-box; }
-        body { margin: 0; padding: 0; font-family: monospace; background: #0a0f1e; overflow: hidden; }
-        canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #0f172a; display: block; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: monospace; background: #0a0f1e; overflow: hidden; }
+        canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; display: block; cursor: grab; }
+        canvas:active { cursor: grabbing; }
         
         .panel {
-            position: fixed; bottom: 12px; left: 12px; right: 12px; max-width: 340px;
+            position: fixed; bottom: 12px; left: 12px;
             background: rgba(0,0,0,0.85); border-radius: 12px; padding: 10px 14px;
-            font-size: 12px; z-index: 100; color: #e2e8f0; border-left: 3px solid #3b82f6;
+            font-size: 11px; z-index: 100; color: #e2e8f0; border-left: 3px solid #3b82f6;
+            backdrop-filter: blur(4px); max-width: 280px;
         }
         .compare {
             position: fixed; top: 12px; left: 12px;
             background: rgba(20, 30, 45, 0.95); border-radius: 12px; padding: 8px 14px;
-            font-size: 11px; z-index: 101; min-width: 220px; border-left: 3px solid #f97316;
-            color: #f1f5f9;
-            backdrop-filter: blur(4px);
+            font-size: 10px; z-index: 101; border-left: 3px solid #f97316;
+            color: #f1f5f9; backdrop-filter: blur(4px);
             box-shadow: 0 2px 10px rgba(0,0,0,0.3);
         }
-        .compare b, .compare div { color: #f1f5f9; }
-        .btn {
+        .help {
             position: fixed; top: 12px; right: 12px;
-            background: #1e293b; color: white; border: 1px solid #3b82f6;
-            padding: 8px 16px; border-radius: 24px; font-size: 12px;
-            cursor: pointer; z-index: 102; font-family: monospace;
+            background: rgba(0,0,0,0.7); color: #94a3b8; padding: 6px 10px;
+            border-radius: 8px; font-size: 10px; z-index: 102;
         }
-        .btn:active { background: #0f172a; }
-        .row { display: flex; justify-content: space-between; margin: 4px 0; }
+        .row { display: flex; justify-content: space-between; margin: 3px 0; }
         .badge { display: inline-block; width: 8px; height: 8px; border-radius: 8px; margin-right: 6px; }
-        .blue { background: #3b82f6; }
-        .red { background: #ef4444; }
-        .green { background: #22c55e; }
+        .blue { background: #3b82f6; } .red { background: #ef4444; }
         hr { margin: 6px 0; border-color: #475569; }
-        #errKal, #errPoly, #diffPred { color: #facc15; font-weight: bold; }
-        #errDelta { font-weight: bold; color: #22c55e; } /* Зеленый, если Калман лучше */
     </style>
 </head>
 <body>
 
 <canvas id="canvas"></canvas>
 
-<div class="compare" id="compareDiv">
+<div class="compare">
     <div><b>Экстраполяция +3s</b></div>
-    <div class="row"><div><span class="badge blue"></span>Фильтр Калмана</div><span id="errKal">-- m</span></div>
-    <div class="row"><div><span class="badge red"></span>Полином</div><span id="errPoly">-- m</span></div>
-    <div class="row"><div><span class="badge green"></span>Разница (K - P)</div><span id="errDelta">-- m</span></div>
+    <div class="row"><span><span class="badge blue"></span>Калман</span><span id="errKal">-- m</span></div>
+    <div class="row"><span><span class="badge red"></span>Полином</span><span id="errPoly">-- m</span></div>
     <hr>
-    <div class="row"><div>Расхождение предсказаний:</div><span id="diffPred">-- m</span></div>
+    <div class="row"><span>Разница:</span><span id="diffPred">-- m</span></div>
 </div>
 
-<div class="panel" id="info">
-    <div><b id="coord">Waiting GPS</b></div>
+<div class="panel">
+    <div><b id="coord">Waiting GPS...</b></div>
     <div class="row"><span>Скорость:</span><span id="speedVal">-- km/h</span></div>
-    <div class="row"><span>Точность:</span><span id="accVal">-- m</span></div>
-    <div class="row"><span>Точки:</span><span id="ptCount">0</span></div>
+    <div class="row"><span>Точность GPS:</span><span id="accVal">-- m</span></div>
+    <div class="row"><span>Точек:</span><span id="ptCount">0</span></div>
 </div>
 
-<button class="btn" id="downloadBtn">Скачать CSV</button>
+<div class="help">🖱️ Drag • ⚡ Scroll zoom • 📱 Pinch</div>
 
 <script>
 (function(){
-    // --- CANVAS ---
     const canvas = document.getElementById('canvas');
-    let ctx = canvas.getContext('2d');
-    let view = { lat: 59.9343, lon: 30.3351 };
-    let zoom = 16;
+    const ctx = canvas.getContext('2d');
     
-    function resize() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        draw();
-    }
+    // Camera state
+    let view = { lat: 59.9343, lon: 30.3351, zoom: 17 };
+    let dragState = null;
+    let pinchStart = null;
     
-    function coordToCanvas(lat, lon) {
-        const scale = Math.pow(2, zoom) * 2.2;
-        const x = (lon - view.lon) * scale * Math.cos(view.lat * Math.PI/180) * 70 + canvas.width/2;
-        const y = (view.lat - lat) * scale * 80 + canvas.height/2;
+    // Data
+    let historyLine = [];
+    let currentPos = { lat: 59.9343, lon: 30.3351 };
+    let predKal = null, predPoly = null;
+    let kalman, historyPoints = [], logData = [];
+    let lastTime = null;
+    const HORIZON = 3.0;
+    
+    // Coordinate transformation
+    function toScreen(lat, lon) {
+        const scale = Math.pow(2, view.zoom) * 1.5;
+        const x = (lon - view.lon) * scale * Math.cos(view.lat * Math.PI/180) * 111000 + canvas.width/2;
+        const y = (view.lat - lat) * scale * 111000 + canvas.height/2;
         return { x, y };
     }
     
-    // --- DATA ---
-    let historyLine = [];
-    let currentPos = { lat: 59.9343, lon: 30.3351 };
-    let predKal = null;
-    let predPoly = null;
+    function toWorld(sx, sy) {
+        const scale = Math.pow(2, view.zoom) * 1.5;
+        const lon = view.lon + (sx - canvas.width/2) / (scale * Math.cos(view.lat * Math.PI/180) * 111000);
+        const lat = view.lat - (sy - canvas.height/2) / (scale * 111000);
+        return { lat, lon };
+    }
     
-    // Храним историю предсказаний для отрисовки ошибок
-    let predictionHistory = [];
-
+    // Improved Kalman with acceleration estimation
+    class Kalman2D {
+        constructor() {
+            // State: [lat, lon, vLat, vLon, aLat, aLon]
+            this.x = [0, 0, 0, 0, 0, 0];
+            this.P = [1,1,0.5,0.5,0.2,0.2]; // Initial covariance
+            this.Q = [0.01,0.01,0.5,0.5,0.3,0.3]; // Process noise
+            this.R = 1.0; // Measurement noise
+            this.initialized = false;
+        }
+        
+        predict(dt) {
+            if (!this.initialized || dt <= 0) return;
+            const dt2 = dt*dt/2;
+            // State transition with acceleration
+            this.x[0] += this.x[2]*dt + this.x[4]*dt2;
+            this.x[1] += this.x[3]*dt + this.x[5]*dt2;
+            this.x[2] += this.x[4]*dt;
+            this.x[3] += this.x[5]*dt;
+            // Covariance prediction
+            for (let i=0; i<6; i++) this.P[i] += this.Q[i]*dt;
+        }
+        
+        update(lat, lon, dt, speed=null, heading=null) {
+            if (!this.initialized) {
+                this.x[0] = lat; this.x[1] = lon;
+                if (speed && heading) {
+                    this.x[2] = speed*Math.cos(heading)/111111;
+                    this.x[3] = speed*Math.sin(heading)/(111111*Math.cos(lat*Math.PI/180));
+                }
+                this.initialized = true;
+                return;
+            }
+            
+            // Incorporate speed measurement if available
+            if (speed && heading && dt > 0.1) {
+                const vx = speed*Math.cos(heading)/111111;
+                const vy = speed*Math.sin(heading)/(111111*Math.cos(this.x[0]*Math.PI/180));
+                // Update velocity with measurement
+                const K2 = this.P[2]/(this.P[2]+0.5);
+                this.x[2] += K2*(vx-this.x[2]);
+                this.P[2] *= (1-K2);
+                const K3 = this.P[3]/(this.P[3]+0.5);
+                this.x[3] += K3*(vy-this.x[3]);
+                this.P[3] *= (1-K3);
+                // Estimate acceleration from velocity change
+                if (dt > 0.5) {
+                    const aLat = (vx-this.x[2])/dt;
+                    const aLon = (vy-this.x[3])/dt;
+                    this.x[4] = 0.8*this.x[4] + 0.2*aLat;
+                    this.x[5] = 0.8*this.x[5] + 0.2*aLon;
+                }
+            }
+            
+            // Position update
+            const K0 = this.P[0]/(this.P[0]+this.R);
+            this.x[0] += K0*(lat-this.x[0]);
+            this.P[0] *= (1-K0);
+            
+            const K1 = this.P[1]/(this.P[1]+this.R);
+            this.x[1] += K1*(lon-this.x[1]);
+            this.P[1] *= (1-K1);
+        }
+        
+        extrapolate(sec) {
+            const dt2 = sec*sec/2;
+            return {
+                lat: this.x[0] + this.x[2]*sec + this.x[4]*dt2,
+                lon: this.x[1] + this.x[3]*sec + this.x[5]*dt2
+            };
+        }
+        
+        get() { return { lat: this.x[0], lon: this.x[1] }; }
+    }
+    
+    // Polynomial using Cramer's rule for 2nd degree
+    function cramer2D(points, targetT) {
+        if (points.length < 2) return points.length ? points[0].coord : 0;
+        if (points.length === 2) {
+            const slope = (points[1].coord-points[0].coord)/(points[1].t-points[0].t);
+            return points[1].coord + slope*targetT;
+        }
+        
+        let s0=points.length, s1=0, s2=0, s3=0, s4=0;
+        let sy=0, syt=0, syt2=0;
+        
+        for (const p of points) {
+            const t=p.t, t2=t*t, t3=t2*t, t4=t3*t;
+            s1+=t; s2+=t2; s3+=t3; s4+=t4;
+            const y=p.coord;
+            sy+=y; syt+=y*t; syt2+=y*t2;
+        }
+        
+        // Cramer's rule for 3x3 system
+        function det3(a,b,c,d,e,f,g,h,i) {
+            return a*(e*i-f*h) - b*(d*i-f*g) + c*(d*h-e*g);
+        }
+        
+        const D = det3(s4,s3,s2, s3,s2,s1, s2,s1,s0);
+        if (Math.abs(D) < 1e-10) {
+            const last=points[points.length-1], first=points[0];
+            return last.coord + (last.coord-first.coord)/(last.t-first.t)*targetT;
+        }
+        
+        const a = det3(syt2,s3,s2, syt,s2,s1, sy,s1,s0)/D;
+        const b = det3(s4,syt2,s2, s3,syt,s1, s2,sy,s0)/D;
+        const c = det3(s4,s3,syt2, s3,s2,syt, s2,s1,sy)/D;
+        
+        return a*targetT*targetT + b*targetT + c;
+    }
+    
+    function polyExtrapolate(history, now, horizon=3) {
+        if (history.length < 2) return null;
+        const recent = history.slice(-12);
+        const latPts=[], lonPts=[];
+        for (const p of recent) {
+            const dt = p.time - now;
+            latPts.push({t:dt, coord:p.lat});
+            lonPts.push({t:dt, coord:p.lon});
+        }
+        return {
+            lat: cramer2D(latPts, horizon),
+            lon: cramer2D(lonPts, horizon)
+        };
+    }
+    
+    function dist(lat1,lon1,lat2,lon2) {
+        const R=6371000;
+        const dLat=(lat2-lat1)*Math.PI/180;
+        const dLon=(lon2-lon1)*Math.PI/180;
+        const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+        return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+    }
+    
     function draw() {
-        if (!ctx) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
         // Grid
         ctx.strokeStyle = "#1e293b";
         ctx.lineWidth = 0.5;
-        for (let i = -4; i <= 4; i++) {
-            let lonLine = view.lon + i * 0.002;
-            let p1 = coordToCanvas(view.lat - 0.02, lonLine);
-            let p2 = coordToCanvas(view.lat + 0.02, lonLine);
+        const gridSize = 0.0005 * Math.pow(2, 15-view.zoom);
+        for (let lon = Math.floor(view.lon/gridSize)*gridSize; lon < view.lon+0.01; lon+=gridSize) {
+            const p1 = toScreen(view.lat-0.02, lon);
+            const p2 = toScreen(view.lat+0.02, lon);
             ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-            let latLine = view.lat + i * 0.002;
-            let p3 = coordToCanvas(latLine, view.lon - 0.02);
-            let p4 = coordToCanvas(latLine, view.lon + 0.02);
-            ctx.beginPath(); ctx.moveTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y); ctx.stroke();
+        }
+        for (let lat = Math.floor(view.lat/gridSize)*gridSize; lat < view.lat+0.01; lat+=gridSize) {
+            const p1 = toScreen(lat, view.lon-0.02);
+            const p2 = toScreen(lat, view.lon+0.02);
+            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
         }
         
-        // History Path
+        // History line
         if (historyLine.length > 1) {
             ctx.beginPath();
-            ctx.strokeStyle = "#60a5fa"; // Более яркий синий
-            ctx.lineWidth = 3;
-            let first = coordToCanvas(historyLine[0][0], historyLine[0][1]);
+            ctx.strokeStyle = "#3b82f6";
+            ctx.lineWidth = 2.5;
+            const first = toScreen(historyLine[0][0], historyLine[0][1]);
             ctx.moveTo(first.x, first.y);
             for (let i=1; i<historyLine.length; i++) {
-                let p = coordToCanvas(historyLine[i][0], historyLine[i][1]);
+                const p = toScreen(historyLine[i][0], historyLine[i][1]);
                 ctx.lineTo(p.x, p.y);
             }
             ctx.stroke();
         }
-
-        // Draw Error Tails (compare prediction vs reality)
-        // Мы хотим показать, где ошибка была большой
-        for(let i = predictionHistory.length - 1; i >= 0; i--) {
-            let item = predictionHistory[i];
-            if (!item) continue;
-            // Рисуем "хвосты" ошибки, если они еще актуальны (например, за последние 10 сек)
-            if (item.time < Date.now()/1000 - 5) continue;
-
-            let pActual = coordToCanvas(item.actualLat, item.actualLon);
-            if (item.kalLat) {
-                let pKal = coordToCanvas(item.kalLat, item.kalLon);
-                ctx.beginPath();
-                ctx.strokeStyle = "rgba(59, 130, 246, 0.2)"; // Прозрачный синий
-                ctx.lineWidth = 4;
-                ctx.moveTo(pKal.x, pKal.y);
-                ctx.lineTo(pActual.x, pActual.y);
-                ctx.stroke();
-            }
-            if (item.polLat) {
-                let pPol = coordToCanvas(item.polLat, item.polLon);
-                ctx.beginPath();
-                ctx.strokeStyle = "rgba(239, 68, 68, 0.2)"; // Прозрачный красный
-                ctx.lineWidth = 4;
-                ctx.moveTo(pPol.x, pPol.y);
-                ctx.lineTo(pActual.x, pActual.y);
-                ctx.stroke();
-            }
-        }
         
-        // Prediction Lines (Future)
+        // Predictions
         if (currentPos && predKal) {
             ctx.beginPath(); ctx.setLineDash([6,6]);
-            ctx.strokeStyle = "#3b82f6"; ctx.lineWidth = 2;
-            let from = coordToCanvas(currentPos.lat, currentPos.lon);
-            let to = coordToCanvas(predKal.lat, predKal.lon);
+            ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2;
+            const from = toScreen(currentPos.lat, currentPos.lon);
+            const to = toScreen(predKal.lat, predKal.lon);
             ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
         }
         if (currentPos && predPoly) {
             ctx.beginPath(); ctx.setLineDash([4,8]);
-            ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2;
-            let from = coordToCanvas(currentPos.lat, currentPos.lon);
-            let to = coordToCanvas(predPoly.lat, predPoly.lon);
+            ctx.strokeStyle = "#f87171"; ctx.lineWidth = 2;
+            const from = toScreen(currentPos.lat, currentPos.lon);
+            const to = toScreen(predPoly.lat, predPoly.lon);
             ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
         }
         ctx.setLineDash([]);
         
-        // Current Location (Blue Dot)
+        // Points
         if (currentPos) {
-            let p = coordToCanvas(currentPos.lat, currentPos.lon);
+            const p = toScreen(currentPos.lat, currentPos.lon);
             ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, 2*Math.PI);
             ctx.fillStyle = "#3b82f6"; ctx.fill();
             ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, 2*Math.PI);
             ctx.fillStyle = "white"; ctx.fill();
         }
-        // Predicted Kalman (Blue Ring)
         if (predKal) {
-            let p = coordToCanvas(predKal.lat, predKal.lon);
-            ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI);
-            ctx.fillStyle = "#3b82f6"; ctx.globalAlpha = 0.5; ctx.fill();
-            ctx.globalAlpha = 1;
+            const p = toScreen(predKal.lat, predKal.lon);
+            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 2*Math.PI);
+            ctx.fillStyle = "rgba(59,130,246,0.6)"; ctx.fill();
         }
-        // Predicted Poly (Red Ring)
         if (predPoly) {
-            let p = coordToCanvas(predPoly.lat, predPoly.lon);
-            ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI);
-            ctx.fillStyle = "#ef4444"; ctx.globalAlpha = 0.5; ctx.fill();
-            ctx.globalAlpha = 1;
+            const p = toScreen(predPoly.lat, predPoly.lon);
+            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 2*Math.PI);
+            ctx.fillStyle = "rgba(239,68,68,0.6)"; ctx.fill();
         }
     }
     
-    function setView(lat, lon) {
-        view.lat = lat; view.lon = lon;
-        resize();
-    }
-    window.addEventListener('resize', resize);
+    // Camera controls
+    canvas.addEventListener('mousedown', e => {
+        dragState = { x: e.clientX, y: e.clientY, lat: view.lat, lon: view.lon };
+        e.preventDefault();
+    });
     
-    // --- KALMAN FILTER (Enhanced) ---
-    // State: [lat, lon, vLat, vLon, aLat, aLon]
-    class Kalman6D {
-        constructor() {
-            this.x = [0,0,0,0,0,0];
-            this.P = [1,0,0,0,0,0, 0,1,0,0,0,0, 0,0,1,0,0,0, 0,0,0,1,0,0, 0,0,0,0,1,0, 0,0,0,0,0,1]; // Identity
-            this.ok = false;
-        }
-        
-        predict(dt) {
-            if (dt <= 0) return;
-            // F matrix (x = x + v*dt + 0.5*a*dt^2)
-            let F = [
-                1, 0, dt, 0, 0.5*dt*dt, 0,
-                0, 1, 0, dt, 0, 0.5*dt*dt,
-                0, 0, 1, 0, dt, 0,
-                0, 0, 0, 1, 0, dt,
-                0, 0, 0, 0, 1, 0,
-                0, 0, 0, 0, 0, 1
-            ];
-            
-            // Prediction: x = F * x
-            let newX = [0,0,0,0,0,0];
-            for(let i=0; i<6; i++) {
-                for(let j=0; j<6; j++) {
-                    newX[i] += F[i*6+j] * this.x[j];
-                }
-            }
-            this.x = newX;
-            
-            // Covariance: P = F * P * F^T + Q
-            // Q (Process Noise) - адаптивная, зависит от времени
-            let qPos = 0.01 + 0.5 * dt; // Растет со временем
-            let qVel = 1.0 + 2.0 * dt;
-            let qAcc = 5.0 + 10.0 * dt; // Больше шума по ускорению, чтобы фильтр был гибче
-            let Q = [
-                qPos, 0, 0, 0, 0, 0,
-                0, qPos, 0, 0, 0, 0,
-                0, 0, qVel, 0, 0, 0,
-                0, 0, 0, qVel, 0, 0,
-                0, 0, 0, 0, qAcc, 0,
-                0, 0, 0, 0, 0, qAcc
-            ];
-            
-            // MatMul F * P
-            let FP = matMul(6, 6, 6, F, this.P);
-            // MatMul (F*P) * F^T
-            let FT = transpose(6, 6, F);
-            let FPFt = matMul(6, 6, 6, FP, FT);
-            // Add Q
-            for(let i=0; i<36; i++) this.P[i] = FPFt[i] + Q[i];
-        }
-        
-        update(lat, lon, dt, spd=null, hdg=null) {
-            if(!this.ok) {
-                this.x[0] = lat; this.x[1] = lon;
-                this.ok = true;
-                return;
-            }
-            
-            // Measurement matrix H (We only observe position)
-            let H = [
-                1,0,0,0,0,0,
-                0,1,0,0,0,0
-            ];
-            
-            // Innovation: z - H*x
-            let y = [lat - this.x[0], lon - this.x[1]];
-            
-            // R (Measurement Noise)
-            let R = [0.1, 0, 0, 0.1]; // Confidence in GPS
-            
-            // S = H * P * H^T + R
-            let HP = matMul(2, 6, 6, H, this.P);
-            let HPHT = matMul(2, 6, 2, HP, transpose(6,2,H));
-            let S = [HPHT[0]+R[0], HPHT[1]+R[1], HPHT[2]+R[2], HPHT[3]+R[3]];
-            
-            // K = P * H^T * inv(S)
-            let PHT = matMul(6, 6, 2, this.P, transpose(6,2,H));
-            // 2x2 matrix inverse
-            let detS = S[0]*S[3] - S[1]*S[2];
-            if (Math.abs(detS) < 1e-9) return;
-            let invS = [S[3]/detS, -S[1]/detS, -S[2]/detS, S[0]/detS];
-            let K = matMul(6, 2, 2, PHT, invS);
-            
-            // x = x + K * y
-            let Ky = matMul(6, 2, 1, K, y);
-            for(let i=0; i<6; i++) this.x[i] += Ky[i];
-            
-            // P = (I - K*H)*P
-            let KH = matMul(6, 2, 6, K, H);
-            let I = [1,0,0,0,0,0, 0,1,0,0,0,0, 0,0,1,0,0,0, 0,0,0,1,0,0, 0,0,0,0,1,0, 0,0,0,0,0,1];
-            let I_KH = [];
-            for(let i=0; i<36; i++) I_KH[i] = I[i] - KH[i];
-            this.P = matMul(6, 6, 6, I_KH, this.P);
-            
-            //  Using speed/heading to improve velocity estimate
-            if(spd && hdg && dt>0.1) {
-                let vx = spd*Math.cos(hdg)/111111;
-                let vy = spd*Math.sin(hdg)/(111111*Math.cos(lat*Math.PI/180));
-                // Blend: 50% from Kalman, 50% from GPS to keep it responsive
-                this.x[2] = 0.5*this.x[2] + 0.5*vx;
-                this.x[3] = 0.5*this.x[3] + 0.5*vy;
-            }
-        }
-        
-        extrapolate(sec) {
-            // x + v*t + 0.5*a*t^2
-            let lat = this.x[0] + this.x[2]*sec + 0.5*this.x[4]*sec*sec;
-            let lon = this.x[1] + this.x[3]*sec + 0.5*this.x[5]*sec*sec;
-            return [lat, lon];
-        }
-        
-        get() {
-            return {lat: this.x[0], lon: this.x[1]};
-        }
-    }
-    
-    // --- MATRIX HELPERS ---
-    function matMul(rowsA, colsA, colsB, A, B) {
-        let C = new Array(rowsA * colsB).fill(0);
-        for (let i = 0; i < rowsA; i++) {
-            for (let j = 0; j < colsB; j++) {
-                let sum = 0;
-                for (let k = 0; k < colsA; k++) {
-                    sum += A[i*colsA + k] * B[k*colsB + j];
-                }
-                C[i*colsB + j] = sum;
-            }
-        }
-        return C;
-    }
-    function transpose(rows, cols, M) {
-        let T = new Array(rows*cols).fill(0);
-        for(let i=0; i<rows; i++) {
-            for(let j=0; j<cols; j++) {
-                T[j*rows + i] = M[i*cols + j];
-            }
-        }
-        return T;
-    }
-    
-    // --- POLYNOMIAL (Quadratic) ---
-    function fitQuadratic(points, targ) {
-        if(points.length<2) return points.length?points[0].coord:0;
-        if(points.length===2) {
-            let slope = (points[1].coord-points[0].coord)/(points[1].t-points[0].t);
-            return points[1].coord + slope*targ;
-        }
-        let sT4=0,sT3=0,sT2=0,sT1=0,sT0=points.length;
-        let sYt2=0,sYt=0,sY=0;
-        for(let p of points) {
-            let t=p.t, y=p.coord, t2=t*t, t3=t2*t, t4=t3*t;
-            sT4+=t4; sT3+=t3; sT2+=t2; sT1+=t;
-            sYt2+=y*t2; sYt+=y*t; sY+=y;
-        }
-        let det = (a,b,c,d,e,f,g,h,i)=> a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);
-        let A = [[sT4,sT3,sT2],[sT3,sT2,sT1],[sT2,sT1,sT0]];
-        let B = [sYt2,sYt,sY];
-        let D = det(A[0][0],A[0][1],A[0][2],A[1][0],A[1][1],A[1][2],A[2][0],A[2][1],A[2][2]);
-        if(Math.abs(D)<1e-8) {
-            let last=points[points.length-1], first=points[0];
-            let slope = (last.coord-first.coord)/(last.t-first.t);
-            return last.coord + slope*targ;
-        }
-        let Da = det(B[0],A[0][1],A[0][2],B[1],A[1][1],A[1][2],B[2],A[2][1],A[2][2]);
-        let Db = det(A[0][0],B[0],A[0][2],A[1][0],B[1],A[1][2],A[2][0],B[2],A[2][2]);
-        let Dc = det(A[0][0],A[0][1],B[0],A[1][0],A[1][1],B[1],A[2][0],A[2][1],B[2]);
-        let a_coef=Da/D, b_coef=Db/D, c_coef=Dc/D;
-        return a_coef*targ*targ + b_coef*targ + c_coef;
-    }
-    
-    function polyExtrapolate(history, nowSec, horizon=3) {
-        if(history.length<2) return null;
-        let recent = history.slice(-12);
-        let latPts=[], lonPts=[];
-        for(let p of recent) {
-            let dt = p.time - nowSec;
-            latPts.push({t:dt, coord:p.lat});
-            lonPts.push({t:dt, coord:p.lon});
-        }
-        return { lat: fitQuadratic(latPts, horizon), lon: fitQuadratic(lonPts, horizon) };
-    }
-    
-    // --- HELPERS ---
-    function dist(lat1,lon1,lat2,lon2) {
-        const R=6371000, p1=lat1*Math.PI/180, p2=lat2*Math.PI/180;
-        let dp=(lat2-lat1)*Math.PI/180, dl=(lon2-lon1)*Math.PI/180;
-        let a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
-        return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
-    
-    let kalman = new Kalman6D();
-    let historyPoints = [];
-    let logData = [];
-    let lastTime = null;
-    const HORIZON = 3.0;
-    
-    function addLog(ts, lat, lon, spd, acc, kalLat, kalLon, polLat, polLon) {
-        logData.push({
-            time: new Date(ts*1000).toISOString(),
-            lat, lon,
-            speed: spd? (spd*3.6).toFixed(1): '',
-            acc: acc? acc.toFixed(1): '',
-            kalLat: kalLat??'', kalLon: kalLon??'',
-            polLat: polLat??'', polLon: polLon??''
-        });
-    }
-    
-    function updateUIandCanvas() {
-        if(currentPos) {
-            document.getElementById('coord').innerHTML = `${currentPos.lat.toFixed(6)}, ${currentPos.lon.toFixed(6)}`;
-            document.getElementById('ptCount').innerHTML = historyPoints.length;
-        }
+    canvas.addEventListener('mousemove', e => {
+        if (!dragState) return;
+        const scale = Math.pow(2, view.zoom) * 1.5;
+        const dx = (e.clientX - dragState.x) / (scale * 111000);
+        const dy = (e.clientY - dragState.y) / (scale * 111000);
+        view.lat = dragState.lat + dy;
+        view.lon = dragState.lon - dx / Math.cos(view.lat * Math.PI/180);
         draw();
-    }
+    });
+    
+    canvas.addEventListener('mouseup', () => { dragState = null; });
+    canvas.addEventListener('mouseleave', () => { dragState = null; });
+    
+    canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        // Zoom towards cursor
+        const worldBefore = toWorld(e.clientX, e.clientY);
+        view.zoom = Math.max(12, Math.min(20, view.zoom + (e.deltaY > 0 ? -0.5 : 0.5)));
+        const worldAfter = toWorld(e.clientX, e.clientY);
+        view.lat += worldBefore.lat - worldAfter.lat;
+        view.lon += worldBefore.lon - worldAfter.lon;
+        draw();
+    }, { passive: false });
+    
+    // Touch for pinch zoom
+    canvas.addEventListener('touchstart', e => {
+        if (e.touches.length === 2) {
+            pinchStart = {
+                dist: Math.hypot(e.touches[0].clientX-e.touches[1].clientX, 
+                                 e.touches[0].clientY-e.touches[1].clientY),
+                lat: view.lat, lon: view.lon, zoom: view.zoom
+            };
+        } else if (e.touches.length === 1) {
+            dragState = { x: e.touches[0].clientX, y: e.touches[0].clientY, 
+                         lat: view.lat, lon: view.lon };
+        }
+        e.preventDefault();
+    }, { passive: false });
+    
+    canvas.addEventListener('touchmove', e => {
+        if (pinchStart && e.touches.length === 2) {
+            const newDist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                                       e.touches[0].clientY-e.touches[1].clientY);
+            view.zoom = Math.max(12, Math.min(20, pinchStart.zoom + Math.log2(newDist/pinchStart.dist)));
+            draw();
+        } else if (dragState && e.touches.length === 1) {
+            const scale = Math.pow(2, view.zoom) * 1.5;
+            const dx = (e.touches[0].clientX - dragState.x) / (scale * 111000);
+            const dy = (e.touches[0].clientY - dragState.y) / (scale * 111000);
+            view.lat = dragState.lat + dy;
+            view.lon = dragState.lon - dx / Math.cos(view.lat * Math.PI/180);
+            draw();
+        }
+        e.preventDefault();
+    }, { passive: false });
+    
+    canvas.addEventListener('touchend', () => { dragState = null; pinchStart = null; });
+    
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        draw();
+    });
+    
+    // Initialize
+    kalman = new Kalman2D();
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     
     function onPosition(pos) {
-        let {latitude, longitude, speed, heading, accuracy} = pos.coords;
-        let now = pos.timestamp/1000;
-        let spdMps = (speed!=null)? speed : null;
-        let hdgRad = (heading!=null && spdMps>0.2)? heading*Math.PI/180 : null;
+        const {latitude, longitude, speed, heading, accuracy} = pos.coords;
+        const now = pos.timestamp/1000;
+        const spd = (speed!=null) ? speed : null;
+        const hdg = (heading!=null && spd>0.2) ? heading*Math.PI/180 : null;
         
-        if(lastTime===null) {
+        if (!lastTime) {
             lastTime = now;
-            kalman.update(latitude, longitude, 0.1, spdMps, hdgRad);
+            kalman.update(latitude, longitude, 0.1, spd, hdg);
             currentPos = kalman.get();
             historyPoints.push({lat:currentPos.lat, lon:currentPos.lon, time:now});
-            setView(currentPos.lat, currentPos.lon);
-            updateUIandCanvas();
-            addLog(now, currentPos.lat, currentPos.lon, spdMps, accuracy, null, null, null, null);
+            view.lat = currentPos.lat;
+            view.lon = currentPos.lon;
+            draw();
             return;
         }
         
-        let dt = now - lastTime;
-        if(dt<=0.01) return;
+        const dt = now - lastTime;
+        if (dt <= 0.01) return;
         lastTime = now;
         
         kalman.predict(dt);
-        kalman.update(latitude, longitude, dt, spdMps, hdgRad);
+        kalman.update(latitude, longitude, dt, spd, hdg);
         currentPos = kalman.get();
+        
         historyPoints.push({lat:currentPos.lat, lon:currentPos.lon, time:now});
-        if(historyPoints.length>60) historyPoints.shift();
-        historyLine = historyPoints.map(p=>[p.lat, p.lon]);
+        if (historyPoints.length > 50) historyPoints.shift();
+        historyLine = historyPoints.map(p => [p.lat, p.lon]);
         
         // Predictions
-        let [kLat, kLon] = kalman.extrapolate(HORIZON);
-        predKal = {lat:kLat, lon:kLon};
-        let polyPred = (historyPoints.length>=3) ? polyExtrapolate(historyPoints, now, HORIZON) : null;
-        predPoly = polyPred;
+        predKal = kalman.extrapolate(HORIZON);
+        predPoly = (historyPoints.length >= 3) ? polyExtrapolate(historyPoints, now, HORIZON) : null;
         
-        // Calculate Errors by looking at historical predictions
-        // We store predictions made 3s ago and compare to current actual position
-        let targetTime = now - HORIZON;
+        // Error lookback
         let errK=null, errP=null;
-        
-        // Store current prediction for future error calculation
-        predictionHistory.push({
-            time: now,
-            actualLat: latitude, actualLon: longitude, // current ground truth
-            kalLat: kLat, kalLon: kLon,
-            polLat: polyPred?.lat, polLon: polyPred?.lon
-        });
-        
-        // Look for a prediction made exactly HORIZON seconds ago
-        // Use a simple loop back to find closest
-        for(let i=predictionHistory.length-1; i>=0; i--) {
-            let item = predictionHistory[i];
-            if (item.time <= targetTime && item.time > targetTime - 0.2) {
-                if (item.kalLat) {
-                    errK = dist(latitude, longitude, item.kalLat, item.kalLon);
-                }
-                if (item.polLat) {
-                    errP = dist(latitude, longitude, item.polLat, item.polLon);
-                }
+        const targetT = now - HORIZON;
+        for (let i=logData.length-1; i>=0; i--) {
+            const e = logData[i];
+            const eTime = new Date(e.time).getTime()/1000;
+            if (Math.abs(eTime-targetT) < 0.5 && e.kalLat !== null) {
+                errK = dist(latitude, longitude, e.kalLat, e.kalLon);
+                if (e.polLat !== null) errP = dist(latitude, longitude, e.polLat, e.polLon);
                 break;
             }
         }
         
-        // Update UI
-        let errKDisplay = (errK!=null) ? errK.toFixed(1)+' m' : '-- m';
-        let errPDisplay = (errP!=null && predPoly) ? errP.toFixed(1)+' m' : (historyPoints.length>=3? '...' : '-- m');
-        document.getElementById('errKal').innerHTML = errKDisplay;
-        document.getElementById('errPoly').innerHTML = errPDisplay;
-        
-        if(errK !== null && errP !== null) {
-            let diff = errK - errP;
-            document.getElementById('errDelta').innerHTML = diff.toFixed(1) + ' m';
-            // Color coding
-            let span = document.getElementById('errDelta');
-            if(diff < 0) { span.style.color = '#3b82f6'; } // Kalman better
-            else if(diff > 0) { span.style.color = '#ef4444'; } // Poly better
-            else { span.style.color = '#facc15'; }
-        } else {
-            document.getElementById('errDelta').innerHTML = '-- m';
+        document.getElementById('errKal').textContent = errK ? errK.toFixed(1)+' m' : '-- m';
+        document.getElementById('errPoly').textContent = (errP && predPoly) ? errP.toFixed(1)+' m' : '-- m';
+        if (predKal && predPoly) {
+            document.getElementById('diffPred').textContent = dist(predKal.lat,predKal.lon,predPoly.lat,predPoly.lon).toFixed(1)+' m';
         }
         
-        if(predKal && predPoly) {
-            let diffD = dist(predKal.lat, predKal.lon, predPoly.lat, predPoly.lon);
-            document.getElementById('diffPred').innerHTML = diffD.toFixed(1)+' m';
-        } else document.getElementById('diffPred').innerHTML = '-- m';
+        document.getElementById('coord').textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+        document.getElementById('speedVal').textContent = spd ? (spd*3.6).toFixed(1)+' km/h' : '--';
+        document.getElementById('accVal').textContent = accuracy ? accuracy.toFixed(1)+' m' : '--';
+        document.getElementById('ptCount').textContent = historyPoints.length;
         
-        let speedKmh = spdMps ? (spdMps*3.6).toFixed(1) : '--';
-        document.getElementById('speedVal').innerHTML = speedKmh+' km/h';
-        document.getElementById('accVal').innerHTML = accuracy ? accuracy.toFixed(1)+' m' : '--';
-        
-        setView(currentPos.lat, currentPos.lon);
-        updateUIandCanvas();
-        
-        addLog(now, currentPos.lat, currentPos.lon, spdMps, accuracy, kLat, kLon, 
-               polyPred? polyPred.lat:null, polyPred? polyPred.lon:null);
-               
-        // Cleanup old history for performance
-        if(predictionHistory.length > 200) predictionHistory.splice(0, 50);
-    }
-    
-    function onError(e) {
-        document.getElementById('coord').innerHTML = 'GPS error';
-    }
-    
-    // CSV download
-    document.getElementById('downloadBtn').onclick = () => {
-        if(logData.length===0) return alert('No data');
-        let rows = ['timestamp,lat,lon,speed_kmh,accuracy_m,kalman_lat,kalman_lon,poly_lat,poly_lon'];
-        for(let d of logData) {
-            rows.push(`${d.time},${d.lat},${d.lon},${d.speed},${d.acc},${d.kalLat},${d.kalLon},${d.polLat},${d.polLon}`);
+        // Auto-follow if not dragging
+        if (!dragState && !pinchStart) {
+            view.lat = currentPos.lat;
+            view.lon = currentPos.lon;
         }
-        let blob = new Blob([rows.join('\n')], {type:'text/csv'});
-        let a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `gnss_${Date.now()}.csv`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-    };
-    
-    if(navigator.geolocation) {
-        navigator.geolocation.watchPosition(onPosition, onError, {enableHighAccuracy:true, timeout:8000, maximumAge:0});
-    } else {
-        document.getElementById('coord').innerHTML = 'No geolocation';
+        
+        draw();
+        
+        logData.push({
+            time: new Date(now*1000).toISOString(),
+            kalLat: predKal.lat, kalLon: predKal.lon,
+            polLat: predPoly?.lat ?? null, polLon: predPoly?.lon ?? null
+        });
+        if (logData.length > 200) logData.shift();
     }
-    resize();
+    
+    if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(onPosition, 
+            () => document.getElementById('coord').textContent = 'GPS error',
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
+    }
+    
+    draw();
 })();
 </script>
 </body>
