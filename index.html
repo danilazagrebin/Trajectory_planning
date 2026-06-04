@@ -178,6 +178,10 @@
             initialized: false
         };
 
+        // Начальное время для синхронизации performance.now() с реальным временем
+        let startRealTime = Date.now();
+        let startPerfTime = performance.now();
+
         // ============ ИНИЦИАЛИЗАЦИЯ КАРТЫ ============
         function initMap() {
             map = L.map('map', {
@@ -238,6 +242,23 @@
                 return div;
             };
             legend.addTo(map);
+
+            // Инициализируем временные метки
+            startRealTime = Date.now();
+            startPerfTime = performance.now();
+        }
+
+        // ============ ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ISO TIMESTAMP ============
+        function getISOTimestamp() {
+            // Вычисляем реальное время на основе performance.now()
+            const elapsedMs = performance.now() - startPerfTime;
+            const realTime = new Date(startRealTime + elapsedMs);
+            return realTime.toISOString(); // Формат: 2026-06-03T14:12:54.570Z
+        }
+
+        function getTimeInSeconds() {
+            // Возвращаем время в секундах для внутренних вычислений
+            return (startRealTime + (performance.now() - startPerfTime)) / 1000;
         }
 
         // ============ ФИЛЬТР КАЛМАНА ============
@@ -408,13 +429,11 @@
             return (distance / dt) * 3.6;
         }
 
-        function getCurrentTimestamp() {
-            return performance.now() / 1000;
-        }
-
         // ============ ОБРАБОТКА ДАННЫХ GPS ============
         function handlePosition(position) {
-            const now = getCurrentTimestamp();
+            const nowSeconds = getTimeInSeconds();
+            const isoTimestamp = getISOTimestamp();
+            
             const lat = position.coords.latitude;
             const lon = position.coords.longitude;
             const accuracy = position.coords.accuracy;
@@ -422,17 +441,17 @@
             let speed = 0;
             if (dataPoints.length > 0) {
                 const prev = dataPoints[dataPoints.length - 1];
-                const dt = now - prev._time;
+                const dt = nowSeconds - prev._time;
                 speed = calculateSpeed(prev.lat, prev.lon, lat, lon, dt);
             }
 
-            const pointWithTime = { t: now, lat, lon };
+            const pointWithTime = { t: nowSeconds, lat, lon };
             const pointsForPrediction = dataPoints.map(p => ({ t: p._time, lat: p.lat, lon: p.lon }));
             pointsForPrediction.push(pointWithTime);
 
             let dt_kalman = 1.0;
             if (dataPoints.length > 0) {
-                dt_kalman = now - dataPoints[dataPoints.length - 1]._time;
+                dt_kalman = nowSeconds - dataPoints[dataPoints.length - 1]._time;
             }
             updateKalman(lat, lon, dt_kalman);
 
@@ -440,8 +459,8 @@
             const polyPred = polyExtrapolate(pointsForPrediction, 3.0);
 
             const dataPoint = {
-                timestamp: now.toFixed(3),
-                _time: now,
+                timestamp: isoTimestamp,  // ISO формат: 2026-06-03T14:12:54.570Z
+                _time: nowSeconds,
                 lat, lon,
                 speed_kmh: speed.toFixed(2),
                 accuracy_m: accuracy.toFixed(1),
@@ -454,6 +473,8 @@
             dataPoints.push(dataPoint);
             updateMapDisplay(lat, lon, kalmanPred, polyPred);
             updateUI();
+            
+            console.log(`[${isoTimestamp}] Точка: ${lat.toFixed(6)}, ${lon.toFixed(6)} | Калман: ${kalmanPred?.lat.toFixed(6) || 'нет'}, ${kalmanPred?.lon.toFixed(6) || 'нет'} | Полином: ${polyPred?.lat.toFixed(6) || 'нет'}, ${polyPred?.lon.toFixed(6) || 'нет'}`);
         }
 
         function updateMapDisplay(lat, lon, kalmanPred, polyPred) {
@@ -496,6 +517,10 @@
                 alert('Геолокация не поддерживается');
                 return;
             }
+
+            // Сбрасываем синхронизацию времени при старте
+            startRealTime = Date.now();
+            startPerfTime = performance.now();
 
             trackingActive = true;
             document.getElementById('startBtn').disabled = true;
@@ -556,7 +581,7 @@
 
             dataPoints.forEach(point => {
                 const row = [
-                    point.timestamp,
+                    point.timestamp,  // Теперь в формате ISO: 2026-06-03T14:12:54.570Z
                     point.lat,
                     point.lon,
                     point.speed_kmh,
@@ -582,15 +607,18 @@
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
+            
+            console.log(`CSV сохранён: ${filename}, точек: ${dataPoints.length}`);
+            console.log('Пример timestamp:', dataPoints[0]?.timestamp);
         }
 
         // ============ ЗАПУСК ============
         window.addEventListener('load', () => {
             initMap();
-            // Убедимся, что кнопка Старт активна
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
-            console.log('GPS Трекер готов. Нажмите "СТАРТ" для начала.');
+            console.log('GPS Трекер готов. Timestamp в формате ISO 8601.');
+            console.log('Пример формата:', new Date().toISOString());
         });
     </script>
 </body>
